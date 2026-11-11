@@ -1,7 +1,9 @@
 import time
 import base64
+import copy
 import urllib.request
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Dict, Any, List
 import httpx
 from sqlalchemy import text
@@ -15,147 +17,236 @@ from app.engines.providers.fmp import FMPProvider
 from app.engines.providers.marketaux import MarketauxProvider
 from app.engines.providers.dhan import DhanHQProvider
 
+_audit_cache_lock = Lock()
+_last_audit_result: Dict[str, Any] | None = None
 
-def run_integrations_audit() -> Dict[str, Any]:
+
+def _llm_audit_result(provider: Any, probe: bool, latency_ms: float) -> Dict[str, Any]:
+    health = provider.check_availability(probe=probe)
+    status = health["connection_status"]
+    return {
+        **health,
+        "status": status,
+        "configured": status != "Not configured",
+        "operational": status in ("Connected", "Degraded"),
+        "model": health["active_model"] or health["configured_model"],
+        "http_status": None,
+        "latency_ms": latency_ms,
+        "information": (
+            "Provider generation verified."
+            if status in ("Connected", "Degraded")
+            else health["error_message"] or status
+        ),
+        "error": health["error_message"],
+    }
+
+
+def _integration_summary(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    with _audit_cache_lock:
+        previous_successes = {
+            item["provider"]: item.get("last_successful_test")
+            for item in (_last_audit_result or {}).get("integrations", [])
+        }
+    now = datetime.now(timezone.utc).isoformat()
+    safe_messages = {
+        "authentication": "Provider authentication failed.",
+        "quota": "Provider rate limit or quota was reached.",
+        "model_not_found": "The requested model is unavailable to this account.",
+        "network": "The provider could not be reached.",
+        "provider_error": "The provider request failed.",
+        "vector_store": "Vector retrieval is unavailable with the active database.",
+    }
+    for result in results:
+        if result["status"] == "Failed":
+            result["status"] = "Unavailable"
+        elif result["status"] == "Not Configured":
+            result["status"] = "Not configured"
+        result.setdefault("configured_model", result.get("model"))
+        result.setdefault(
+            "active_model",
+            result.get("model")
+            if result["status"] in ("Connected", "Degraded")
+            else None,
+        )
+        result.setdefault(
+            "last_successful_test",
+            now
+            if result["status"] in ("Connected", "Degraded")
+            else previous_successes.get(result["provider"]),
+        )
+        error = (
+            result.get("error")
+            if result["status"] in ("Failed", "Unavailable", "Degraded")
+            else None
+        )
+        status_code = result.get("http_status")
+        category = result.get("error_category")
+        if error and not category:
+            if status_code in (401, 403):
+                category = "authentication"
+            elif status_code == 429:
+                category = "quota"
+            elif status_code == 404 and result["provider"] in ("Google Gemini", "Groq"):
+                category = "model_not_found"
+            elif status_code is not None and status_code >= 500:
+                category = "network"
+            else:
+                category = "provider_error"
+        result["error_category"] = category
+        safe_message = safe_messages.get(category) if error else None
+        result["error_message"] = safe_message
+        result["error"] = safe_message
+
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "total_integrations": len(results),
+        "connected_count": sum(1 for result in results if result["status"] == "Connected"),
+        "degraded_count": sum(1 for result in results if result["status"] == "Degraded"),
+        "failed_count": sum(
+            1 for result in results if result["status"] in ("Failed", "Unavailable")
+        ),
+        "not_configured_count": sum(
+            1 for result in results if result["status"] in ("Not configured", "Not Configured")
+        ),
+        "integrations": results,
+    }
+
+
+def get_cached_integrations_status() -> Dict[str, Any]:
+    """Return the last explicit audit, or a no-network status snapshot."""
+    with _audit_cache_lock:
+        if _last_audit_result is not None:
+            return copy.deepcopy(_last_audit_result)
+
+    gemini_result = _llm_audit_result(GeminiProvider(), False, 0)
+    groq_result = _llm_audit_result(GroqProvider(), False, 0)
+    results = [gemini_result, groq_result]
+
+    db_health = check_database_health()
+    db_connected = db_health["reachable"]
+    database_result = {
+        "provider": "SQLite (development fallback)" if is_sqlite else "PostgreSQL",
+        "status": "Unavailable"
+        if not db_connected
+        else "Degraded"
+        if is_sqlite
+        else "Connected",
+        "configured": bool(settings.DATABASE_URL) or is_sqlite,
+        "operational": db_connected,
+        "model": "SQLite" if is_sqlite else "PostgreSQL",
+        "configured_model": None,
+        "active_model": None,
+        "last_successful_test": datetime.now(timezone.utc).isoformat()
+        if db_connected
+        else None,
+        "error_category": None if db_connected else "network",
+        "error_message": None if db_connected else "Database connection is unavailable.",
+        "http_status": None,
+        "latency_ms": 0,
+        "information": "Reachable using the SQLite development fallback."
+        if db_connected and is_sqlite
+        else "Database reachable."
+        if db_connected
+        else "Database connection is unavailable.",
+        "error": None if db_connected else "Database connection is unavailable.",
+    }
+    results.append(database_result)
+    if db_connected:
+        vector_available = db_health["pgvector_available"]
+        results.append({
+            "provider": "pgvector",
+            "status": "Connected" if vector_available else "Unavailable",
+            "configured": True,
+            "operational": vector_available,
+            "model": "pgvector" if vector_available else None,
+            "configured_model": None,
+            "active_model": None,
+            "last_successful_test": datetime.now(timezone.utc).isoformat()
+            if vector_available
+            else None,
+            "error_category": None if vector_available else "vector_store",
+            "error_message": None if vector_available else "Vector retrieval is unavailable with the active database.",
+            "http_status": None,
+            "latency_ms": 0,
+            "information": "Vector extension available."
+            if vector_available
+            else "pgvector is unavailable in the active database; RAG vector retrieval cannot run.",
+            "error": None if vector_available else "Vector retrieval is unavailable with the active database.",
+        })
+
+    configured_integrations = [
+        ("DhanHQ", bool(settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN), "DhanHQ API"),
+        ("Marketaux", bool(settings.MARKETAUX_API_TOKEN), "Marketaux API"),
+        ("Financial Modeling Prep (FMP)", bool(settings.FMP_API_KEY), "FMP API"),
+        ("Langfuse", bool(settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY), "Langfuse"),
+        ("Sentry", bool(settings.SENTRY_DSN), "Sentry SDK"),
+    ]
+    for provider_name, configured, model_name in configured_integrations:
+        status = "Configured" if configured else "Not Configured"
+        message = "Connection has not been tested." if configured else None
+        results.append({
+            "provider": provider_name,
+            "status": status,
+            "configured": configured,
+            "operational": False,
+            "model": model_name if configured else None,
+            "configured_model": None,
+            "active_model": None,
+            "last_successful_test": None,
+            "error_category": None,
+            "error_message": message,
+            "http_status": None,
+            "latency_ms": 0,
+            "information": message or "Provider is not configured.",
+            "error": message,
+        })
+    return _integration_summary(results)
+
+
+def run_integrations_audit(probe_ai: bool = False) -> Dict[str, Any]:
     """
-    Executes live connectivity and authentication probes across all configured external services.
+    Probes non-LLM integrations and reports cached LLM health by default. LLM generation
+    probes run only when explicitly requested.
     Never exposes API secrets, tokens, or raw authorization headers.
     """
     results: List[Dict[str, Any]] = []
 
     # 1. Google Gemini API
     t0 = time.time()
-    if settings.GEMINI_API_KEY:
-        try:
-            gp = GeminiProvider()
-            res = gp.generate("Say: EquiLens Gemini Probe")
-            lat = round((time.time() - t0) * 1000, 1)
-            if res.is_live:
-                results.append({
-                    "provider": "Google Gemini",
-                    "status": "Connected",
-                    "configured": True,
-                    "operational": True,
-                    "model": res.model,
-                    "http_status": 200,
-                    "latency_ms": lat,
-                    "information": f"Inference verified ({res.tokens_used} tokens). Active model: {res.model}",
-                    "error": None,
-                })
-            else:
-                results.append({
-                    "provider": "Google Gemini",
-                    "status": "Failed",
-                    "configured": True,
-                    "operational": False,
-                    "model": settings.GEMINI_MODEL,
-                    "http_status": 404 if "404" in (res.error or "") else 500,
-                    "latency_ms": lat,
-                    "information": "Model generation failed.",
-                    "error": res.error,
-                })
-        except Exception as e:
-            lat = round((time.time() - t0) * 1000, 1)
-            results.append({
-                "provider": "Google Gemini",
-                "status": "Failed",
-                "configured": True,
-                "operational": False,
-                "model": settings.GEMINI_MODEL,
-                "http_status": 500,
-                "latency_ms": lat,
-                "information": "Exception connecting to Gemini endpoint.",
-                "error": str(e),
-            })
-    else:
-        results.append({
-            "provider": "Google Gemini",
-            "status": "Not Configured",
-            "configured": False,
-            "operational": False,
-            "model": None,
-            "http_status": None,
-            "latency_ms": 0,
-            "information": "GEMINI_API_KEY is not set.",
-            "error": None,
-        })
+    gp = GeminiProvider()
+    gemini_result = _llm_audit_result(gp, probe_ai, round((time.time() - t0) * 1000, 1))
+    gemini_result["provider"] = "Google Gemini"
+    results.append(gemini_result)
 
     # 2. Groq API
     t0 = time.time()
-    if settings.GROQ_API_KEY:
-        try:
-            gqp = GroqProvider()
-            res = gqp.generate("Say: EquiLens Groq Probe")
-            lat = round((time.time() - t0) * 1000, 1)
-            if res.is_live:
-                results.append({
-                    "provider": "Groq",
-                    "status": "Connected",
-                    "configured": True,
-                    "operational": True,
-                    "model": res.model,
-                    "http_status": 200,
-                    "latency_ms": lat,
-                    "information": f"High-speed inference verified ({res.tokens_used} tokens). Active model: {res.model}",
-                    "error": None,
-                })
-            else:
-                results.append({
-                    "provider": "Groq",
-                    "status": "Failed",
-                    "configured": True,
-                    "operational": False,
-                    "model": settings.GROQ_MODEL,
-                    "http_status": 404 if "404" in (res.error or "") else 500,
-                    "latency_ms": lat,
-                    "information": "Inference failed on configured model.",
-                    "error": res.error,
-                })
-        except Exception as e:
-            lat = round((time.time() - t0) * 1000, 1)
-            results.append({
-                "provider": "Groq",
-                "status": "Failed",
-                "configured": True,
-                "operational": False,
-                "model": settings.GROQ_MODEL,
-                "http_status": 500,
-                "latency_ms": lat,
-                "information": "Exception communicating with Groq API.",
-                "error": str(e),
-            })
-    else:
-        results.append({
-            "provider": "Groq",
-            "status": "Not Configured",
-            "configured": False,
-            "operational": False,
-            "model": None,
-            "http_status": None,
-            "latency_ms": 0,
-            "information": "GROQ_API_KEY is not set.",
-            "error": None,
-        })
+    gqp = GroqProvider()
+    groq_result = _llm_audit_result(gqp, probe_ai, round((time.time() - t0) * 1000, 1))
+    groq_result["provider"] = "Groq"
+    results.append(groq_result)
 
     # 3. Supabase & PostgreSQL Connection
     t0 = time.time()
     db_health = check_database_health()
     lat = round((time.time() - t0) * 1000, 1)
     if db_health["reachable"]:
+        db_status = "Degraded" if is_sqlite else "Connected"
         results.append({
-            "provider": "PostgreSQL / Supabase",
-            "status": "Connected",
+            "provider": "SQLite (development fallback)" if is_sqlite else "PostgreSQL",
+            "status": db_status,
             "configured": True,
             "operational": True,
-            "model": "PostgreSQL 17.11 (Supabase)",
-            "http_status": 200,
+            "model": "SQLite" if is_sqlite else "PostgreSQL",
+            "http_status": None if is_sqlite else 200,
             "latency_ms": lat,
-            "information": f"Relational DB active ({db_health['database_type']}). Schema & migrations verified.",
+            "information": "Relational database is reachable using the SQLite development fallback."
+            if is_sqlite
+            else "PostgreSQL connection verified; schema and migrations are available.",
             "error": None,
         })
     else:
         results.append({
-            "provider": "PostgreSQL / Supabase",
+            "provider": "SQLite (development fallback)" if is_sqlite else "PostgreSQL",
             "status": "Failed",
             "configured": bool(settings.DATABASE_URL),
             "operational": False,
@@ -171,14 +262,17 @@ def run_integrations_audit() -> Dict[str, Any]:
         pgv_ok = db_health.get("pgvector_available", False)
         results.append({
             "provider": "pgvector",
-            "status": "Connected" if pgv_ok else "Degraded",
+            "status": "Connected" if pgv_ok else "Unavailable",
             "configured": True,
             "operational": pgv_ok,
-            "model": "pgvector v0.8.2" if pgv_ok else "Simulated Vector Store",
+            "model": "pgvector" if pgv_ok else None,
             "http_status": 200 if pgv_ok else None,
             "latency_ms": 5.0,
-            "information": "Vector similarity search operational for 384-dimensional dense embeddings." if pgv_ok else "pgvector not detected, operating in simulated mode.",
-            "error": None if pgv_ok else "Extension vector not found in PostgreSQL instance",
+            "information": "pgvector vector similarity search is available."
+            if pgv_ok
+            else "pgvector is unavailable in the active database; RAG vector retrieval cannot run.",
+            "error_category": None if pgv_ok else "vector_store",
+            "error": None if pgv_ok else "Vector retrieval is unavailable with the active database.",
         })
 
     # 5. DhanHQ API (Market Data & Account)
@@ -492,18 +586,8 @@ def run_integrations_audit() -> Dict[str, Any]:
         })
 
     # Summary metrics
-    total = len(results)
-    connected = sum(1 for r in results if r["status"] == "Connected")
-    degraded = sum(1 for r in results if r["status"] == "Degraded")
-    failed = sum(1 for r in results if r["status"] == "Failed")
-    not_configured = sum(1 for r in results if r["status"] == "Not Configured")
-
-    return {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "total_integrations": total,
-        "connected_count": connected,
-        "degraded_count": degraded,
-        "failed_count": failed,
-        "not_configured_count": not_configured,
-        "integrations": results,
-    }
+    summary = _integration_summary(results)
+    with _audit_cache_lock:
+        global _last_audit_result
+        _last_audit_result = copy.deepcopy(summary)
+    return summary

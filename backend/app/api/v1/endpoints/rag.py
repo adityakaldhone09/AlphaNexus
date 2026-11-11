@@ -771,7 +771,11 @@ def rag_update_config(payload: RAGConfigUpdateRequest, db: Session = Depends(get
         llm_model=payload.llm_model or (current.llm_model if current else "gemini-1.5-flash"),
         llm_temperature=payload.llm_temperature if payload.llm_temperature is not None else (float(current.llm_temperature) if current else 0.1),
         llm_max_tokens=payload.llm_max_tokens or (current.llm_max_tokens if current else 2048),
-        description=payload.description,
+        description=(
+            payload.description
+            if payload.description is not None
+            else current.description if current else None
+        ),
         created_by="admin",
     )
     db.add(new_cfg)

@@ -28,7 +28,8 @@ This document details health monitoring endpoints, probe behaviors, latency benc
 
 ### C. External Integrations Audit Probe
 - **Endpoint:** `GET /api/v1/health/integrations`
-- **Purpose:** Real-time connectivity and latency probe across all third-party APIs.
+- **Purpose:** Returns a cached/configuration snapshot by default. Add `?probe=true` to explicitly check configured integrations, list accessible AI models, and run short Gemini/Groq generation tests; live tests may consume provider quota.
+- **AI Provider Fields:** `configured_model`, `active_model`, `connection_status`, `last_successful_test`, `error_category`, and sanitized `error_message`.
 - **Example Response:**
   ```json
   {
@@ -150,8 +151,8 @@ This document details health monitoring endpoints, probe behaviors, latency benc
 |---|---|---|
 | `could not translate host name "...@db..."` | Database password contains `@` character. | `normalize_db_url()` automatically converts `@` to `%40`. If connecting externally, ensure password is URL-encoded. |
 | `relation "citations" does not exist` | Database tables not yet migrated. | Run `alembic upgrade head` or `Base.metadata.create_all(bind=engine)`. |
-| Gemini `404 models/gemini-1.5-flash is not found` | Upstream model identifier deprecation. | Switch `GEMINI_MODEL=gemini-3.5-flash` in `.env`. The adapter also includes automated fallback. |
-| Groq `404 model_not_found` | Configured model not in account subscription. | Switch `GROQ_MODEL=qwen/qwen3.8-27b` in `.env`. |
+| Gemini model-not-found response | Configured model is absent from the account's `generateContent` catalog. | Keep `GEMINI_MODEL` configurable; explicitly test with `?probe=true`. The adapter discovers an accessible catalog fallback, or use `GEMINI_FALLBACK_MODEL` to pin one. |
+| Groq model-not-found response | Configured model is absent from the account's model catalog. | Keep `GROQ_MODEL` configurable; explicitly test with `?probe=true`. The adapter discovers an accessible catalog fallback, or use `GROQ_FALLBACK_MODEL` to pin one. |
 | DhanHQ `806 Data APIs not Subscribed` | Dhan Trading API key is valid, but Market Data add-on is inactive. | Activate Data APIs subscription on web.dhan.co, or continue with verified platform fixtures. |
 | FMP `402 Payment Required` on `.NS` tickers | Account tier does not include Indian exchange symbols. | Upgrade FMP tier or use the built-in NSE/BSE fundamental data engine. |
 | Langfuse `401 UnauthorizedError: Confirm host` | Region mismatch between API key and endpoint. | Set `LANGFUSE_HOST=https://us.cloud.langfuse.com` for US accounts, or `https://cloud.langfuse.com` for EU accounts. |

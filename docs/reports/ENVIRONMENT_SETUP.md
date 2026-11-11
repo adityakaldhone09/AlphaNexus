@@ -47,9 +47,11 @@ The backend loads configuration files using Pydantic Settings with the following
 | Variable | Recommended Value | Notes |
 |---|---|---|
 | `GEMINI_API_KEY` | Google AI Studio Key | Required for Google Gemini synthesis. |
-| `GEMINI_MODEL` | `gemini-3.5-flash` or `gemini-3.8-flash` | Note: `gemini-1.5-flash` is retired in current API versions. |
+| `GEMINI_MODEL` | A model available to the account | The selected model is checked against the live `generateContent` catalog during an explicit health test. |
+| `GEMINI_FALLBACK_MODEL` | Optional model ID | If unset, the adapter selects an accessible `generateContent` fallback from the live catalog after a model-not-found response. |
 | `GROQ_API_KEY` | `gsk_...` | High-speed inference API key. |
-| `GROQ_MODEL` | `qwen/qwen3.8-27b` | Note: `llama-3.3-70b-versatile` may return 404 depending on account tier. |
+| `GROQ_MODEL` | A model available to the account | The selected model is checked against the account's model catalog during an explicit health test. |
+| `GROQ_FALLBACK_MODEL` | Optional model ID | If unset, the adapter selects an accessible chat model from the live catalog after a model-not-found response. |
 
 ---
 
