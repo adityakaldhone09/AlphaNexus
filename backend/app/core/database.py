@@ -138,7 +138,7 @@ def check_database_health() -> Dict[str, Any]:
                 result["pgvector_available"] = bool(vec_check)
             else:
                 result["pgvector_available"] = False
-                result["details"] = "Operating in local SQLite fallback mode. pgvector simulated."
+                result["details"] = "pgvector is unavailable in local SQLite fallback mode."
 
             result["migration_status"] = "verified"
     except Exception as e:

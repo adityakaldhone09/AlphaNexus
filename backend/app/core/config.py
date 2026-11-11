@@ -48,9 +48,11 @@ class Settings(BaseSettings):
     # AI & LLM Providers
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-1.5-flash"
+    GEMINI_FALLBACK_MODEL: Optional[str] = None
 
     GROQ_API_KEY: Optional[str] = None
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_FALLBACK_MODEL: Optional[str] = None
 
     # Embedding Model
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-base-en-v1.5"
@@ -102,4 +104,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

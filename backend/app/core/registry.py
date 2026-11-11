@@ -1,16 +1,23 @@
+import platform
+import time
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Dict, Any, Optional
-from datetime import datetime
+from typing import Any, Dict, Optional
+
 from pydantic import BaseModel
+
 from .config import settings
-from .logging import logger
 
 
 class EngineState(str, Enum):
     READY = "Ready"
+    CONNECTED = "Connected"
+    CONFIGURED = "Configured"
     DEGRADED = "Degraded"
     DISABLED = "Disabled"
     INITIALIZING = "Initializing"
+    UNAVAILABLE = "Unavailable"
+    UNKNOWN = "Unknown"
     FAILED = "Failed"
 
 
@@ -19,233 +26,565 @@ class EngineInfo(BaseModel):
     state: EngineState
     provider: Optional[str] = None
     version: Optional[str] = None
+    description: Optional[str] = None
     details: Optional[str] = None
-    last_checked: datetime = datetime.utcnow()
+    configured: bool = False
+    connected: Optional[bool] = None
+    verified: bool = False
+    latency_ms: Optional[float] = None
+    last_successful_operation: Optional[datetime] = None
+    error_category: Optional[str] = None
+    error_message: Optional[str] = None
+    last_checked: datetime
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class EngineRegistry:
-    """
-    Central Service Registry tracking real-time health and initialization
-    states of all core engines and third-party provider integrations.
-    """
+    """Reports observed runtime state separately from configured state."""
+
     def __init__(self):
         self._engines: Dict[str, EngineInfo] = {}
         self.initialize_engines()
 
-    def initialize_engines(self):
-        # 1. Application Backend
-        self.register(
+    def initialize_engines(self, verify: bool = False) -> None:
+        checked_at = _now()
+        engines: Dict[str, EngineInfo] = {}
+
+        def add(
+            key: str,
+            name: str,
+            state: EngineState,
+            *,
+            provider: Optional[str],
+            description: str,
+            details: str,
+            configured: bool = True,
+            connected: Optional[bool] = None,
+            verified: bool = False,
+            version: Optional[str] = None,
+            latency_ms: Optional[float] = None,
+            last_successful_operation: Optional[datetime] = None,
+            error_category: Optional[str] = None,
+            error_message: Optional[str] = None,
+        ) -> None:
+            engines[key] = EngineInfo(
+                name=name,
+                state=state,
+                provider=provider,
+                description=description,
+                details=details,
+                configured=configured,
+                connected=connected,
+                verified=verified,
+                version=version,
+                latency_ms=latency_ms,
+                last_successful_operation=last_successful_operation,
+                error_category=error_category,
+                error_message=error_message,
+                last_checked=checked_at,
+            )
+
+        add(
             "backend",
-            EngineInfo(
-                name="Application Backend",
-                state=EngineState.READY,
-                provider="FastAPI / Python 3.13",
-                version="1.0.0",
-                details="Core API server initialized and accepting requests",
-            ),
+            "Application Backend",
+            EngineState.READY,
+            provider="FastAPI",
+            version=f"Python {platform.python_version()}",
+            description="HTTP API process and application runtime.",
+            details="API process is serving requests.",
+            verified=True,
+            connected=True,
+            last_successful_operation=checked_at,
         )
 
-        # 2. Database Engine
-        from .database import check_database_health
-        db_health = check_database_health()
-        if db_health["reachable"]:
-            db_state = EngineState.READY if db_health["pgvector_available"] else EngineState.DEGRADED
-            db_details = f"Connected ({db_health['database_type']}). pgvector: {'available' if db_health['pgvector_available'] else 'not detected / simulated'}"
-        else:
-            db_state = EngineState.FAILED
-            db_details = f"Unreachable: {db_health.get('details', 'connection failed')}"
+        from .database import check_database_health, is_sqlite
 
-        self.register(
+        database_health = check_database_health()
+        database_ok = bool(database_health.get("reachable"))
+        database_state = (
+            EngineState.DEGRADED
+            if database_ok and is_sqlite
+            else EngineState.CONNECTED
+            if database_ok
+            else EngineState.UNAVAILABLE
+        )
+        add(
             "database",
-            EngineInfo(
-                name="Database Engine",
-                state=db_state,
-                provider="PostgreSQL / Supabase" if not db_health.get("database_type") == "sqlite_fallback" else "SQLite Dev Fallback",
-                version="SQLAlchemy 2.0",
-                details=db_details,
+            "Relational Database",
+            database_state,
+            provider="SQLite (development fallback)" if is_sqlite else "Configured SQL database",
+            description="Relational persistence used by company, financial, forecast, and research APIs.",
+            details=(
+                "Reachable; the process is using its SQLite development fallback."
+                if database_ok and is_sqlite
+                else "Database connection verified."
+                if database_ok
+                else "The configured relational database is unreachable."
+            ),
+            configured=bool(settings.DATABASE_URL) or is_sqlite,
+            connected=database_ok,
+            verified=database_ok,
+            last_successful_operation=checked_at if database_ok else None,
+            error_category=None if database_ok else "database",
+            error_message=None if database_ok else "Database connectivity check failed.",
+        )
+
+        from app.database.mongodb import mongodb_manager
+
+        mongo_health = mongodb_manager.check_health()
+        mongo_connected = bool(mongo_health.get("connected"))
+        mongo_configured = bool(mongodb_manager.uri)
+        add(
+            "mongodb",
+            "MongoDB",
+            EngineState.CONNECTED
+            if mongo_connected
+            else EngineState.UNAVAILABLE
+            if mongo_configured
+            else EngineState.DISABLED,
+            provider="MongoDB Atlas" if mongo_configured else None,
+            description="Document, conversation, and MongoDB Atlas integration status.",
+            details=(
+                f"Connected to database '{mongodb_manager.db_name}'."
+                if mongo_connected
+                else "MongoDB is configured but unreachable."
+                if mongo_configured
+                else "MONGODB_URI is not configured."
+            ),
+            configured=mongo_configured,
+            connected=mongo_connected,
+            verified=mongo_connected,
+            last_successful_operation=checked_at if mongo_connected else None,
+            error_category=None if mongo_connected or not mongo_configured else "network",
+            error_message=None
+            if mongo_connected or not mongo_configured
+            else "MongoDB connectivity check failed; credentials and network access may need attention.",
+        )
+
+        vector_state = (
+            EngineState.UNAVAILABLE
+            if database_ok and is_sqlite
+            else EngineState.CONNECTED
+            if database_ok and database_health.get("pgvector_available")
+            else EngineState.CONFIGURED
+            if database_ok
+            else EngineState.UNAVAILABLE
+        )
+        vector_details = (
+            "RAG retrieval uses SQLAlchemy/pgvector, but the active SQLite fallback has no pgvector; retrieval is unavailable."
+            if database_ok and is_sqlite
+            else "RAG retrieval uses SQLAlchemy with pgvector."
+            if database_ok and database_health.get("pgvector_available")
+            else "RAG retrieval is wired to pgvector; extension availability has not been verified."
+            if database_ok
+            else "Vector retrieval is unavailable while the relational database is unreachable."
+        )
+        add(
+            "vector_store",
+            "Vector Retrieval Store",
+            vector_state,
+            provider="pgvector" if database_ok else None,
+            description="Vector backend actually used by the RAG retrieval service.",
+            details=vector_details,
+            configured=database_ok,
+            connected=bool(database_health.get("pgvector_available")),
+            verified=bool(database_health.get("pgvector_available")),
+            last_successful_operation=checked_at
+            if database_health.get("pgvector_available")
+            else None,
+            error_category="vector_store"
+            if vector_state in (EngineState.DEGRADED, EngineState.UNAVAILABLE)
+            else None,
+            error_message=(
+                "The active database does not provide pgvector; vector retrieval is unavailable."
+                if vector_state in (EngineState.DEGRADED, EngineState.UNAVAILABLE)
+                else None
             ),
         )
 
-        # 3. PostgreSQL / pgvector
-        pgv_state = EngineState.READY if db_health.get("pgvector_available") else EngineState.DEGRADED
-        self.register(
-            "pgvector",
-            EngineInfo(
-                name="PostgreSQL / pgvector",
-                state=pgv_state,
-                provider="pgvector",
-                details="Vector similarity index ready for 384-d embeddings" if db_health.get("pgvector_available") else "Simulated vector store active in local dev mode",
-            ),
-        )
+        from app.engines.rag.embeddings import embedding_engine
 
-        # 4. Embedding Model
-        self.register(
+        embedding_latency: Optional[float] = None
+        embedding_error: Optional[str] = None
+        embedding_verified = False
+        if verify:
+            started = time.monotonic()
+            try:
+                vector = embedding_engine.generate_query_embedding("health check")
+                embedding_verified = embedding_engine.validate_embedding_dimension(vector)
+                embedding_latency = round((time.monotonic() - started) * 1000, 1)
+                if not embedding_verified:
+                    embedding_error = "Embedding output dimension does not match configuration."
+            except Exception:
+                embedding_latency = round((time.monotonic() - started) * 1000, 1)
+                embedding_error = "Embedding generation failed."
+        embedding_info = embedding_engine.get_model_info()
+        fallback_mode = bool(embedding_info.get("fallback_mode"))
+        embedding_ready = embedding_verified or bool(embedding_info.get("loaded"))
+        embedding_state = (
+            EngineState.DEGRADED
+            if fallback_mode or embedding_error
+            else EngineState.READY
+            if embedding_ready
+            else EngineState.CONFIGURED
+        )
+        add(
             "embedding",
-            EngineInfo(
-                name="Embedding Model",
-                state=EngineState.READY,
-                provider=settings.EMBEDDING_MODEL_NAME,
-                version="384-dimensional",
-                details=f"Embedding pipeline initialized on {settings.EMBEDDING_DEVICE}",
+            "Embedding Engine",
+            embedding_state,
+            provider="Sentence Transformers" if not fallback_mode else "Deterministic fallback",
+            version=str(embedding_info.get("version_tag", "")) or None,
+            description="Generates normalized vectors for document and query retrieval.",
+            details=(
+                embedding_error
+                or "Deterministic non-semantic fallback is active."
+                if fallback_mode
+                else "Embedding generation and output dimension verified."
+                if embedding_verified
+                else "Model loaded; run a health refresh to verify inference."
+                if embedding_ready
+                else "Embedding model is configured but not loaded."
             ),
+            configured=True,
+            connected=embedding_verified if verify else None,
+            verified=embedding_verified,
+            latency_ms=embedding_latency,
+            last_successful_operation=checked_at if embedding_verified else None,
+            error_category="embedding" if embedding_error else None,
+            error_message=embedding_error,
         )
 
-        # 5. LLM Provider (Gemini / Groq)
-        if settings.GEMINI_API_KEY:
-            llm_state = EngineState.READY
-            llm_provider = f"Google Gemini ({settings.GEMINI_MODEL})"
-            llm_details = "API key configured and ready"
-        elif settings.GROQ_API_KEY:
-            llm_state = EngineState.READY
-            llm_provider = f"Groq ({settings.GROQ_MODEL})"
-            llm_details = "API key configured and ready"
-        else:
-            llm_state = EngineState.DISABLED
-            llm_provider = "Gemini / Groq"
-            llm_details = "No LLM API keys provided (GEMINI_API_KEY or GROQ_API_KEY). RAG retrieval operates with heuristic synthesis or fallback summary."
+        from app.integrations.llm.base import get_provider_health
 
-        self.register(
-            "llm",
-            EngineInfo(
-                name="LLM Provider",
-                state=llm_state,
-                provider=llm_provider,
-                details=llm_details,
-            ),
+        llm_configurations = [
+            ("gemini", "Google Gemini", settings.GEMINI_API_KEY, settings.GEMINI_MODEL),
+            ("groq", "Groq", settings.GROQ_API_KEY, settings.GROQ_MODEL),
+        ]
+        for key, name, api_key, model in llm_configurations:
+            health = get_provider_health(name, model, bool(api_key))
+            state_map = {
+                "Connected": EngineState.CONNECTED,
+                "Degraded": EngineState.DEGRADED,
+                "Configured": EngineState.CONFIGURED,
+                "Unavailable": EngineState.CONFIGURED if api_key else EngineState.DISABLED,
+                "Not configured": EngineState.DISABLED,
+            }
+            provider_state = state_map.get(health["connection_status"], EngineState.UNKNOWN)
+            add(
+                key,
+                name,
+                provider_state,
+                provider=name if api_key else None,
+                version=health.get("active_model") or model if api_key else None,
+                description=f"{name} text generation provider.",
+                details=health.get("error_message")
+                or (
+                    "Provider generation was verified."
+                    if health.get("last_successful_test")
+                    else "Credentials are configured; connectivity has not been tested."
+                    if api_key
+                    else "Provider credentials are not configured."
+                ),
+                configured=bool(api_key),
+                connected=provider_state in (EngineState.CONNECTED, EngineState.DEGRADED)
+                if health.get("last_successful_test")
+                else None,
+                verified=bool(health.get("last_successful_test")),
+                last_successful_operation=(
+                    datetime.fromisoformat(health["last_successful_test"])
+                    if health.get("last_successful_test")
+                    else None
+                ),
+                error_category=health.get("error_category"),
+                error_message=health.get("error_message"),
+            )
+
+        rag_state = (
+            EngineState.DEGRADED
+            if fallback_mode or vector_state in (EngineState.DEGRADED, EngineState.UNAVAILABLE)
+            else EngineState.READY
+            if verify and embedding_verified and database_ok
+            else EngineState.CONFIGURED
         )
-
-        # 6. RAG Engine
-        rag_state = EngineState.READY if (llm_state == EngineState.READY or settings.DATA_MODE == "demo") else EngineState.DEGRADED
-        self.register(
+        add(
             "rag",
-            EngineInfo(
-                name="RAG Engine",
-                state=rag_state,
-                provider="EquiLens RAG Core",
-                version="1.0.0",
-                details="Multi-modal document loader, section chunker, vector retrieval, and citation engine active",
+            "RAG Pipeline",
+            rag_state,
+            provider="SQLAlchemy / pgvector",
+            version="1.0.0",
+            description="Document extraction, chunking, embeddings, retrieval, and citation pipeline.",
+            details=(
+                "Retrieval is partially available: an embedding or vector-store fallback is active."
+                if rag_state == EngineState.DEGRADED
+                else "Database and embedding checks passed; no end-to-end document retrieval test was run."
+                if verify
+                else "Pipeline is initialized; run a retrieval query to verify document-level results."
             ),
+            configured=True,
+            connected=database_ok and embedding_verified if verify else None,
+            verified=verify and database_ok and embedding_verified,
+            last_successful_operation=checked_at
+            if verify and database_ok and embedding_verified
+            else None,
         )
 
-        # 7. Document Storage
-        if settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
-            storage_state = EngineState.READY
-            storage_provider = "Supabase Private Storage"
-            storage_details = f"Bucket '{settings.SUPABASE_STORAGE_BUCKET}' connected with RLS"
-        else:
-            storage_state = EngineState.DEGRADED
-            storage_provider = "Local File Storage"
-            storage_details = f"Local directory storage at: {settings.LOCAL_UPLOAD_DIR}"
+        storage_configured = bool(
+            settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY
+        )
+        storage_provider = "Supabase Storage" if storage_configured else "Local filesystem"
+        storage_state = (
+            EngineState.CONFIGURED
+            if storage_configured
+            else EngineState.READY
+            if not verify and settings.LOCAL_UPLOAD_DIR
+            else EngineState.CONNECTED
+            if verify
+            else EngineState.CONFIGURED
+        )
+        storage_latency: Optional[float] = None
+        if verify and not storage_configured:
+            import os
+            import tempfile
 
-        self.register(
+            started = time.monotonic()
+            try:
+                os.makedirs(settings.LOCAL_UPLOAD_DIR, exist_ok=True)
+                with tempfile.TemporaryFile(dir=settings.LOCAL_UPLOAD_DIR) as test_file:
+                    test_file.write(b"health-check")
+                    test_file.flush()
+                storage_latency = round((time.monotonic() - started) * 1000, 1)
+                storage_state = EngineState.READY
+            except OSError:
+                storage_state = EngineState.UNAVAILABLE
+        add(
             "storage",
-            EngineInfo(
-                name="Document Storage",
-                state=storage_state,
-                provider=storage_provider,
-                details=storage_details,
+            "Document Storage",
+            storage_state,
+            provider=storage_provider,
+            description="Configured destination for uploaded financial documents.",
+            details=(
+                "Local storage read/write check passed."
+                if verify and storage_state == EngineState.READY
+                else "Cloud storage is configured; connectivity has not been verified by this page."
+                if storage_configured
+                else "Local upload directory is configured; run refresh to verify write access."
             ),
+            configured=True,
+            connected=storage_state in (EngineState.READY, EngineState.CONNECTED)
+            if verify and not storage_configured
+            else None,
+            verified=verify
+            and not storage_configured
+            and storage_state in (EngineState.READY, EngineState.CONNECTED),
+            latency_ms=storage_latency,
+            last_successful_operation=checked_at
+            if verify
+            and not storage_configured
+            and storage_state in (EngineState.READY, EngineState.CONNECTED)
+            else None,
+            error_category="storage" if storage_state == EngineState.UNAVAILABLE else None,
+            error_message="Local upload directory is not writable."
+            if storage_state == EngineState.UNAVAILABLE
+            else None,
         )
 
-        # 8. News Engine
-        if settings.MARKETAUX_API_TOKEN:
-            news_state = EngineState.READY
-            news_provider = "Marketaux Live API"
-            news_details = "Live financial news feed and event classifier active"
-        else:
-            news_state = EngineState.DEGRADED if settings.DATA_MODE == "demo" else EngineState.DISABLED
-            news_provider = "Marketaux (Demo / Seed Mode)"
-            news_details = "No MARKETAUX_API_TOKEN supplied. Running with curated high-fidelity market announcement fixtures."
-
-        self.register(
+        news_configured = bool(settings.MARKETAUX_API_TOKEN)
+        news_state = EngineState.CONFIGURED if news_configured else (
+            EngineState.DEGRADED if settings.DATA_MODE.lower() == "demo" else EngineState.DISABLED
+        )
+        add(
             "news",
-            EngineInfo(
-                name="News Engine",
-                state=news_state,
-                provider=news_provider,
-                details=news_details,
-            ),
+            "News Intelligence",
+            news_state,
+            provider="Marketaux" if news_configured else "Demo fixtures"
+            if settings.DATA_MODE.lower() == "demo"
+            else None,
+            description="News ingestion and classification service.",
+            details="Provider credentials are configured; live connectivity has not been tested."
+            if news_configured
+            else "Live news provider is not configured; demo fixtures may be used."
+            if settings.DATA_MODE.lower() == "demo"
+            else "No live news provider is configured.",
+            configured=news_configured,
+            connected=None,
         )
 
-        # 9. Market Data Provider
-        if settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
-            mkt_state = EngineState.READY
-            mkt_provider = "DhanHQ Live Market API"
-            mkt_details = "Live NSE/BSE quote stream & historical price engine connected"
-        else:
-            mkt_state = EngineState.DEGRADED if settings.DATA_MODE == "demo" else EngineState.DISABLED
-            mkt_provider = "DhanHQ / NSE-BSE Fixtures"
-            mkt_details = "Operating in demo mode with authentic historical price and technical indicators for NSE/BSE leaders."
-
-        self.register(
+        market_configured = bool(settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN)
+        add(
             "market_data",
-            EngineInfo(
-                name="Market Data Provider",
-                state=mkt_state,
-                provider=mkt_provider,
-                details=mkt_details,
-            ),
+            "Market Data Provider",
+            EngineState.CONFIGURED
+            if market_configured
+            else EngineState.DEGRADED
+            if settings.DATA_MODE.lower() == "demo"
+            else EngineState.DISABLED,
+            provider="DhanHQ" if market_configured else "Seeded market data"
+            if settings.DATA_MODE.lower() == "demo"
+            else None,
+            description="Live NSE/BSE market data integration.",
+            details="DhanHQ credentials are configured; connectivity has not been tested."
+            if market_configured
+            else "Live market data is not configured; demo data may be available."
+            if settings.DATA_MODE.lower() == "demo"
+            else "No live market data provider is configured.",
+            configured=market_configured,
         )
 
-        # 10. Financial Analytics Engine
-        self.register(
+        try:
+            import numpy
+            import pandas
+            from app.engines.forecasting.models.baseline import BaselineForecaster
+
+            if verify:
+                started = time.monotonic()
+                BaselineForecaster().fit_predict([1.0, 2.0, 3.0], forecast_steps=1)
+                analytics_latency = round((time.monotonic() - started) * 1000, 1)
+            else:
+                analytics_latency = None
+            analytics_state = EngineState.READY
+            analytics_error = None
+            analytics_details = (
+                "Deterministic analytics and forecast smoke test passed."
+                if verify
+                else f"Numerical dependencies available (NumPy {numpy.__version__}, pandas {pandas.__version__})."
+            )
+        except Exception:
+            analytics_state = EngineState.UNAVAILABLE
+            analytics_latency = None
+            analytics_error = "Analytics dependencies or deterministic calculation check failed."
+            analytics_details = analytics_error
+        add(
             "analytics",
-            EngineInfo(
-                name="Financial Analytics",
-                state=EngineState.READY,
-                provider="Deterministic Engine (NumPy/Pandas)",
-                version="1.0.0",
-                details="Strict zero-denominator safety, DuPont analysis, margin metrics, and Cash Flow algorithms loaded",
-            ),
+            "Financial Analytics",
+            analytics_state,
+            provider="NumPy / pandas",
+            description="Deterministic financial ratios and calculation engine.",
+            details=analytics_details,
+            configured=True,
+            connected=analytics_state == EngineState.READY if verify else None,
+            verified=verify and analytics_state == EngineState.READY,
+            latency_ms=analytics_latency,
+            last_successful_operation=checked_at
+            if verify and analytics_state == EngineState.READY
+            else None,
+            error_category="analytics" if analytics_error else None,
+            error_message=analytics_error,
         )
 
-        # 11. Forecasting Engine
-        self.register(
+        forecast_state = EngineState.CONFIGURED
+        forecast_error = None
+        forecast_latency: Optional[float] = None
+        if verify:
+            started = time.monotonic()
+            try:
+                from app.engines.forecasting.models.baseline import BaselineForecaster
+
+                predictions, _ = BaselineForecaster().fit_predict(
+                    [1.0, 2.0, 3.0], forecast_steps=1
+                )
+                if len(predictions) != 1:
+                    raise ValueError("Unexpected forecast output.")
+                forecast_state = EngineState.READY
+                forecast_latency = round((time.monotonic() - started) * 1000, 1)
+            except Exception:
+                forecast_state = EngineState.UNAVAILABLE
+                forecast_error = "Forecast model smoke test failed."
+        add(
             "forecasting",
-            EngineInfo(
-                name="Forecasting Engine",
-                state=EngineState.READY,
-                provider="Scikit-Learn / Statsmodels / ARIMA",
-                version="1.0.0",
-                details="Scenario projections (Bull/Base/Bear), 80-95% prediction intervals, and walk-forward cross-validation ready",
-            ),
+            "Forecasting Engine",
+            forecast_state,
+            provider="Baseline linear trend",
+            version="1.0",
+            description="Financial forecasting and scenario analysis.",
+            details="Prediction smoke test passed."
+            if forecast_state == EngineState.READY
+            else "Forecast dependencies are configured; refresh to run a prediction smoke test."
+            if forecast_state == EngineState.CONFIGURED
+            else forecast_error or "Forecast engine unavailable.",
+            configured=True,
+            connected=forecast_state == EngineState.READY if verify else None,
+            verified=verify and forecast_state == EngineState.READY,
+            latency_ms=forecast_latency,
+            last_successful_operation=checked_at
+            if verify and forecast_state == EngineState.READY
+            else None,
+            error_category="forecasting" if forecast_error else None,
+            error_message=forecast_error,
         )
 
-    def register(self, key: str, info: EngineInfo):
+        self._engines = engines
+
+    def register(self, key: str, info: EngineInfo) -> None:
         self._engines[key] = info
 
     def get(self, key: str) -> Optional[EngineInfo]:
         return self._engines.get(key)
 
-    def update_state(self, key: str, state: EngineState, details: Optional[str] = None):
+    def update_state(
+        self,
+        key: str,
+        state: EngineState,
+        details: Optional[str] = None,
+    ) -> None:
         if key in self._engines:
             self._engines[key].state = state
             if details:
                 self._engines[key].details = details
-            self._engines[key].last_checked = datetime.utcnow()
+            self._engines[key].last_checked = _now()
 
     def get_all(self) -> Dict[str, EngineInfo]:
         return self._engines
 
     def get_summary(self) -> Dict[str, Any]:
-        states = [e.state for e in self._engines.values()]
-        overall = "Healthy"
-        if EngineState.FAILED in states:
+        states = [engine.state for engine in self._engines.values()]
+        if EngineState.UNAVAILABLE in states or EngineState.FAILED in states:
             overall = "Critical"
-        elif EngineState.DEGRADED in states:
+        elif any(
+            state in (EngineState.DEGRADED, EngineState.CONFIGURED, EngineState.UNKNOWN)
+            for state in states
+        ):
             overall = "Degraded"
-        
+        elif EngineState.INITIALIZING in states:
+            overall = "Initializing"
+        else:
+            overall = "Operational"
+
         return {
             "status": overall,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": _now().isoformat(),
             "total_engines": len(self._engines),
-            "ready_count": sum(1 for s in states if s == EngineState.READY),
-            "degraded_count": sum(1 for s in states if s == EngineState.DEGRADED),
-            "disabled_count": sum(1 for s in states if s == EngineState.DISABLED),
-            "failed_count": sum(1 for s in states if s == EngineState.FAILED),
-            "engines": {k: v.model_dump() for k, v in self._engines.items()},
+            "ready_count": sum(
+                1
+                for state in states
+                if state in (EngineState.READY, EngineState.CONNECTED)
+            ),
+            "degraded_count": sum(
+                1 for state in states if state == EngineState.DEGRADED
+            ),
+            "configured_count": sum(
+                1 for state in states if state == EngineState.CONFIGURED
+            ),
+            "unavailable_count": sum(
+                1
+                for state in states
+                if state in (EngineState.UNAVAILABLE, EngineState.FAILED)
+            ),
+            "disabled_count": sum(
+                1 for state in states if state == EngineState.DISABLED
+            ),
+            "failed_count": sum(
+                1
+                for state in states
+                if state in (EngineState.UNAVAILABLE, EngineState.FAILED)
+            ),
+            "engines": {
+                key: engine.model_dump(mode="json")
+                for key, engine in self._engines.items()
+            },
         }
 
 
 engine_registry = EngineRegistry()
-
