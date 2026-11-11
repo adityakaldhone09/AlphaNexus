@@ -108,8 +108,9 @@ def get_safe_system_configuration():
             "marketaux_configured": bool(settings.MARKETAUX_API_TOKEN),
             "fmp_configured": bool(settings.FMP_API_KEY),
             "supabase_storage_configured": bool(
-                settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY
+                settings.SUPABASE_URL and (settings.effective_supabase_service_role_key or settings.effective_supabase_anon_key)
             ),
+            "supabase_db_configured": bool(settings.DATABASE_URL),
         },
     }
 

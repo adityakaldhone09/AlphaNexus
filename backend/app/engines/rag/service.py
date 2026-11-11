@@ -367,6 +367,27 @@ class RAGService:
             },
         }
 
+    def search_documents(
+        self,
+        query: str,
+        top_k: int = 3,
+        db: Optional[Session] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Legacy/convenience helper for document retrieval.
+        """
+        close_db = False
+        if db is None:
+            from app.core.database import SessionLocal
+            db = SessionLocal()
+            close_db = True
+        try:
+            res = self.retrieve(db=db, query=query, top_k=top_k)
+            return res.get("chunks", [])
+        finally:
+            if close_db:
+                db.close()
+
     # ==================================================================
     # RESEARCH CHAT (retrieval + generation)
     # ==================================================================

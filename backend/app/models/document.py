@@ -48,7 +48,7 @@ class DocumentChunk(Base):
     section = Column(String(100), nullable=True)
     page_number = Column(Integer, nullable=True)
     token_count = Column(Integer, default=0)
-    embedding = Column(Vector(768), nullable=True)  # 768-d BAAI/bge-base-en-v1.5
+    embedding = Column(Vector(384), nullable=True)  # 384-d BAAI/bge-small-en-v1.5
     metadata_json = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow)
 

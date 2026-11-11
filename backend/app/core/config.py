@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_ENV: str = "development"
-    APP_NAME: str = "EquiLens AI"
+    APP_NAME: str = "AlphaNexus"
     APP_DEBUG: bool = True
     DATA_MODE: str = "demo"  # "demo" or "live"
     API_V1_PREFIX: str = "/api/v1"
@@ -38,8 +38,18 @@ class Settings(BaseSettings):
     # Supabase (Managed Auth & Storage)
     SUPABASE_URL: Optional[str] = None
     SUPABASE_ANON_KEY: Optional[str] = None
+    SUPABASE_PUBLISHABLE_KEY: Optional[str] = None
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
-    SUPABASE_STORAGE_BUCKET: str = "equilens-documents"
+    SUPABASE_SECRET_KEY: Optional[str] = None
+    SUPABASE_STORAGE_BUCKET: str = "alphanexus-documents"
+
+    @property
+    def effective_supabase_anon_key(self) -> Optional[str]:
+        return self.SUPABASE_PUBLISHABLE_KEY or self.SUPABASE_ANON_KEY
+
+    @property
+    def effective_supabase_service_role_key(self) -> Optional[str]:
+        return self.SUPABASE_SECRET_KEY or self.SUPABASE_SERVICE_ROLE_KEY
 
     # MongoDB Atlas Vector Search
     MONGODB_URI: Optional[str] = None
@@ -55,8 +65,8 @@ class Settings(BaseSettings):
     GROQ_FALLBACK_MODEL: Optional[str] = None
 
     # Embedding Model
-    EMBEDDING_MODEL_NAME: str = "BAAI/bge-base-en-v1.5"
-    EMBEDDING_DIMENSION: int = 768
+    EMBEDDING_MODEL_NAME: str = "BAAI/bge-small-en-v1.5"
+    EMBEDDING_DIMENSION: int = 384
     EMBEDDING_DEVICE: str = "cpu"
     EMBEDDING_BATCH_SIZE: int = 32
     EMBEDDING_MAX_SEQ_LENGTH: int = 512

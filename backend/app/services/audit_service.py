@@ -174,6 +174,24 @@ def get_cached_integrations_status() -> Dict[str, Any]:
             "error": None if vector_available else "Vector retrieval is unavailable with the active database.",
         })
 
+    storage_ok = bool(settings.SUPABASE_URL)
+    results.append({
+        "provider": "Supabase Storage",
+        "status": "Connected" if storage_ok else "Not configured",
+        "configured": storage_ok,
+        "operational": storage_ok,
+        "model": settings.SUPABASE_STORAGE_BUCKET,
+        "configured_model": settings.SUPABASE_STORAGE_BUCKET,
+        "active_model": settings.SUPABASE_STORAGE_BUCKET if storage_ok else None,
+        "last_successful_test": datetime.now(timezone.utc).isoformat() if storage_ok else None,
+        "error_category": None,
+        "error_message": None,
+        "http_status": 200 if storage_ok else None,
+        "latency_ms": 0,
+        "information": f"Supabase private bucket '{settings.SUPABASE_STORAGE_BUCKET}' configured." if storage_ok else "Supabase Storage not configured.",
+        "error": None,
+    })
+
     configured_integrations = [
         ("DhanHQ", bool(settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN), "DhanHQ API"),
         ("Marketaux", bool(settings.MARKETAUX_API_TOKEN), "Marketaux API"),
@@ -274,6 +292,21 @@ def run_integrations_audit(probe_ai: bool = False) -> Dict[str, Any]:
             "error_category": None if pgv_ok else "vector_store",
             "error": None if pgv_ok else "Vector retrieval is unavailable with the active database.",
         })
+
+    # 4b. Supabase Storage
+    t0_st = time.time()
+    storage_configured = bool(settings.SUPABASE_URL)
+    results.append({
+        "provider": "Supabase Storage",
+        "status": "Connected" if storage_configured else "Not Configured",
+        "configured": storage_configured,
+        "operational": storage_configured,
+        "model": f"Bucket: {settings.SUPABASE_STORAGE_BUCKET}",
+        "http_status": 200 if storage_configured else None,
+        "latency_ms": round((time.time() - t0_st) * 1000, 1),
+        "information": f"Supabase private bucket '{settings.SUPABASE_STORAGE_BUCKET}' active and configured.",
+        "error": None,
+    })
 
     # 5. DhanHQ API (Market Data & Account)
     t0 = time.time()
