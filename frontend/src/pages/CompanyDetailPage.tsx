@@ -505,7 +505,7 @@ export const CompanyDetailPage: React.FC = () => {
                     {msg.role === 'assistant' && (
                       <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
                         <span className="font-semibold text-cyan-500 flex items-center gap-1.5">
-                          <Bot className="w-3.5 h-3.5" /> EquiLens Research Agent
+                          <Bot className="w-3.5 h-3.5" /> AlphaNexus Research Agent
                         </span>
                         <Badge variant="gain" size="xs">
                           {msg.message_type === 'fact_grounded' ? 'Fact Grounded (RAG)' : 'Analytical Synthesis'}

@@ -8,6 +8,7 @@ import {
 import { AnimatedCandlesticks } from '../components/charts/AnimatedCandlesticks';
 import { ANCard, KPICard } from '../components/shared/ANCard';
 import { ANButton } from '../components/shared/ANButton';
+import { Logo } from '../components/brand/Logo';
 import { api } from '../services/api';
 import type { Company, NewsArticle, MarketEvent } from '../types';
 
@@ -72,7 +73,17 @@ export const OverviewPage: React.FC = () => {
               initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
             >
-              <span className="badge badge-brand mb-3">AI Financial Intelligence</span>
+              <div
+                className="inline-flex items-center gap-2 mb-3.5 px-3 py-1 rounded-full text-xs font-semibold backdrop-blur-sm"
+                style={{
+                  background: 'var(--brand-muted)',
+                  color: 'var(--brand)',
+                  border: '1px solid var(--border)',
+                }}
+              >
+                <Logo variant="icon" height={16} />
+                <span>AI Financial Intelligence Platform</span>
+              </div>
               <h1 className="text-4xl md:text-5xl font-black tracking-tight leading-none"
                 style={{ color: 'var(--text-1)', letterSpacing: '-0.03em' }}>
                 See Beyond the<br />

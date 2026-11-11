@@ -6,6 +6,7 @@ import {
   LucideIcon,
 } from 'lucide-react';
 import { useThemeStore } from '../../stores/themeStore';
+import { Logo } from '../brand/Logo';
 
 export interface MobileNavItem {
   path: string;
@@ -86,22 +87,15 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
           >
             {/* Header */}
             <div className="flex items-center justify-between h-14 px-4 border-b border-[var(--border)]">
-              <Link to="/" onClick={onClose} className="flex items-center gap-2.5">
-                <svg viewBox="0 0 32 32" fill="none" className="w-7 h-7 shrink-0">
-                  <rect width="32" height="32" rx="8" fill="#1558C9"/>
-                  <path d="M8 24L14 8h4l6 16" stroke="#D4FF24" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M10.5 18h11" stroke="#D4FF24" strokeWidth="2" strokeLinecap="round"/>
-                  <circle cx="23" cy="12" r="2.5" fill="#D4FF24"/>
-                </svg>
-                <div className="flex flex-col leading-none">
-                  <span className="font-black text-sm tracking-tight" style={{ color: 'var(--text-1)' }}>
-                    ALPHA<span style={{ color: 'var(--brand)' }}>NEXUS</span>
-                  </span>
-                  <span className="text-[9px] font-semibold tracking-widest uppercase" style={{ color: 'var(--text-3)' }}>
-                    Financial AI
-                  </span>
-                </div>
-              </Link>
+              <Logo
+                variant="horizontal"
+                height={26}
+                asLink
+                to="/"
+                onClick={onClose}
+                showDescriptor
+                descriptorText="Financial AI"
+              />
 
               <button
                 onClick={onClose}

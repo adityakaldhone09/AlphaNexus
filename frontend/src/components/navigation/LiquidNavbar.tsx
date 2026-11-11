@@ -18,6 +18,7 @@ import {
 import { useThemeStore } from '../../stores/themeStore';
 import { NavigationIndicator } from './NavigationIndicator';
 import { MobileNavigation, MobileNavItem } from './MobileNavigation';
+import { Logo } from '../brand/Logo';
 
 export const NAV_ITEMS: MobileNavItem[] = [
   { path: '/',          label: 'Overview',      icon: LayoutDashboard },
@@ -82,45 +83,14 @@ export const LiquidNavbar: React.FC<LiquidNavbarProps> = ({ onSearchOpen }) => {
           <div className="flex items-center justify-between h-14 w-full">
             {/* ── LEFT: Logo & Brand Identity ── */}
             <div className="flex items-center shrink-0 mr-1 xl:mr-3">
-              <Link
+              <Logo
+                variant="horizontal"
+                height={28}
+                asLink
                 to="/"
-                className="flex items-center gap-2 xl:gap-2.5 py-1 px-1 rounded-xl focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:outline-none transition-transform hover:scale-[1.02]"
-                aria-label="ALPHANEXUS Home"
-              >
-                <div className="relative w-7 h-7 xl:w-8 xl:h-8 shrink-0">
-                  <svg viewBox="0 0 32 32" fill="none" className="w-full h-full">
-                    <rect width="32" height="32" rx="8" fill="#1558C9"/>
-                    <path
-                      d="M8 24L14 8h4l6 16"
-                      stroke="#D4FF24"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M10.5 18h11"
-                      stroke="#D4FF24"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                    <circle cx="23" cy="12" r="2.5" fill="#D4FF24"/>
-                  </svg>
-                </div>
-                <div className="flex flex-col leading-tight select-none">
-                  <span
-                    className="font-black text-xs xl:text-[13px] tracking-tight uppercase"
-                    style={{ color: 'var(--text-1)', letterSpacing: '-0.02em' }}
-                  >
-                    ALPHA<span style={{ color: 'var(--brand)' }}>NEXUS</span>
-                  </span>
-                  <span
-                    className="hidden xl:inline text-[8px] xl:text-[9px] font-bold tracking-widest uppercase"
-                    style={{ color: 'var(--text-3)', letterSpacing: '0.12em' }}
-                  >
-                    Financial AI
-                  </span>
-                </div>
-              </Link>
+                showDescriptor
+                descriptorText="Financial AI"
+              />
             </div>
 
             {/* ── CENTER: Primary Navigation Links ── */}
@@ -278,33 +248,12 @@ export const LiquidNavbar: React.FC<LiquidNavbarProps> = ({ onSearchOpen }) => {
       <header className="sticky top-0 z-40 w-full max-w-[100vw] lg:hidden px-3 pt-2 pb-1">
         <div className="glass-navbar rounded-xl mx-auto w-full px-3 h-14 flex items-center justify-between">
           {/* Mobile Brand */}
-          <Link to="/" className="flex items-center gap-2 group shrink-0" aria-label="ALPHANEXUS Home">
-            <svg viewBox="0 0 32 32" fill="none" className="w-7 h-7 shrink-0">
-              <rect width="32" height="32" rx="8" fill="#1558C9"/>
-              <path
-                d="M8 24L14 8h4l6 16"
-                stroke="#D4FF24"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M10.5 18h11"
-                stroke="#D4FF24"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-              <circle cx="23" cy="12" r="2.5" fill="#D4FF24"/>
-            </svg>
-            <div className="flex flex-col leading-none">
-              <span className="font-black text-xs sm:text-sm tracking-tight" style={{ color: 'var(--text-1)' }}>
-                ALPHA<span style={{ color: 'var(--brand)' }}>NEXUS</span>
-              </span>
-              <span className="text-[8px] font-bold tracking-widest uppercase" style={{ color: 'var(--text-3)' }}>
-                Financial AI
-              </span>
-            </div>
-          </Link>
+          <Logo
+            variant="horizontal"
+            height={24}
+            asLink
+            to="/"
+          />
 
           {/* Mobile Controls */}
           <div className="flex items-center gap-1 shrink-0">

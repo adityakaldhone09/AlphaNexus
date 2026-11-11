@@ -1,5 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
+import { Logo } from '../brand/Logo';
 import {
   LayoutDashboard,
   Search,
@@ -48,22 +49,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ isCollapsed, onToggle }) => {
       }`}
     >
       {/* Brand Header */}
-      <div className="h-14 flex items-center justify-between px-3.5 border-b border-slate-200 dark:border-slate-800/80">
-        <NavLink to="/" className="flex items-center gap-2.5 overflow-hidden">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white font-bold text-base shadow-sm shadow-cyan-500/20 shrink-0">
-            EL
-          </div>
-          {!isCollapsed && (
-            <div className="flex flex-col">
-              <span className="font-bold text-sm tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                EquiLens <span className="text-cyan-500 text-[10px] font-mono px-1 py-0.2 bg-cyan-500/10 rounded border border-cyan-500/20">AI</span>
-              </span>
-              <span className="text-[9px] text-slate-500 dark:text-slate-400 font-medium tracking-tight whitespace-nowrap">
-                See Beyond the Stock Price
-              </span>
-            </div>
-          )}
-        </NavLink>
+      <div className="h-14 flex items-center justify-between px-3 border-b border-slate-200 dark:border-slate-800/80">
+        <div className="overflow-hidden">
+          <Logo
+            variant={isCollapsed ? 'icon' : 'horizontal'}
+            height={isCollapsed ? 26 : 24}
+            asLink
+            to="/"
+          />
+        </div>
 
         <button
           onClick={onToggle}

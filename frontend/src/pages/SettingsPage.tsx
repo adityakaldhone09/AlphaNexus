@@ -16,6 +16,7 @@ import {
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
+import { Logo } from '../components/brand/Logo';
 import { useThemeStore } from '../stores/themeStore';
 import { api } from '../services/api';
 import { EnginesSummary } from '../types';
@@ -264,6 +265,108 @@ export const SettingsPage: React.FC = () => {
             <div className="py-8 text-center text-xs text-slate-400">Loading integrations audit...</div>
           )}
         </CardContent>
+      </Card>
+
+      {/* Brand Identity & Visual Assets */}
+      <Card className="p-6 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-4">
+          <div>
+            <CardTitle>AlphaNexus Brand Identity &amp; Assets</CardTitle>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Official vector-extracted visual identity system with high-DPI raster and SVG assets.
+            </p>
+          </div>
+          <Badge variant="gain" size="sm">Official Assets Active</Badge>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* Variant 1: Horizontal Dark */}
+          <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex flex-col justify-between space-y-3">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Horizontal (Dark Mode)</div>
+            <div className="py-4 px-3 flex items-center justify-center min-h-[70px] bg-[#070b16] rounded-lg border border-slate-800">
+              <Logo variant="horizontal" theme="dark" height={28} />
+            </div>
+            <div className="text-[10px] font-mono text-slate-400">/brand/alphanexus-logo-dark.png</div>
+          </div>
+
+          {/* Variant 2: Horizontal Light */}
+          <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex flex-col justify-between space-y-3">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Horizontal (Light Mode)</div>
+            <div className="py-4 px-3 flex items-center justify-center min-h-[70px] bg-white rounded-lg border border-slate-200 shadow-sm">
+              <Logo variant="horizontal" theme="light" height={28} />
+            </div>
+            <div className="text-[10px] font-mono text-slate-400">/brand/alphanexus-logo-light.png</div>
+          </div>
+
+          {/* Variant 2: Standalone Icon */}
+          <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex flex-col justify-between space-y-3">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Standalone Symbol</div>
+            <div className="py-4 flex items-center justify-center min-h-[70px]">
+              <Logo variant="icon" height={38} />
+            </div>
+            <div className="text-[10px] font-mono text-slate-400">/brand/alphanexus-icon.png</div>
+          </div>
+
+          {/* Variant 3: Squircle App Icon */}
+          <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex flex-col justify-between space-y-3">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">App Squircle (PWA / iOS)</div>
+            <div className="py-4 flex items-center justify-center min-h-[70px]">
+              <Logo variant="squircle" height={42} />
+            </div>
+            <div className="text-[10px] font-mono text-slate-400">/brand/apple-touch-icon.png</div>
+          </div>
+
+          {/* Variant 5: Stacked / Compact */}
+          <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex flex-col justify-between space-y-3">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Compact Stacked</div>
+            <div className="py-3 px-2 flex items-center justify-center min-h-[70px] bg-white rounded-lg border border-slate-200 shadow-sm">
+              <Logo variant="stacked" height={52} />
+            </div>
+            <div className="text-[10px] font-mono text-slate-400">/brand/alphanexus-logo-stacked.png</div>
+          </div>
+        </div>
+
+        {/* Color Palette Tokens */}
+        <div className="pt-2">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Brand Color System</div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+            <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center gap-2.5">
+              <div className="w-5 h-5 rounded-md shrink-0 shadow-sm" style={{ background: '#00E5C9' }} />
+              <div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200">Apex Cyan</div>
+                <div className="font-mono text-[10px] text-slate-400">#00E5C9</div>
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center gap-2.5">
+              <div className="w-5 h-5 rounded-md shrink-0 shadow-sm" style={{ background: '#2563EB' }} />
+              <div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200">Cobalt Blue</div>
+                <div className="font-mono text-[10px] text-slate-400">#2563EB</div>
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center gap-2.5">
+              <div className="w-5 h-5 rounded-md shrink-0 shadow-sm" style={{ background: '#6366F1' }} />
+              <div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200">Base Violet</div>
+                <div className="font-mono text-[10px] text-slate-400">#6366F1</div>
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center gap-2.5">
+              <div className="w-5 h-5 rounded-md shrink-0 shadow-sm" style={{ background: '#0E192D' }} />
+              <div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200">Navy Text</div>
+                <div className="font-mono text-[10px] text-slate-400">#0E192D</div>
+              </div>
+            </div>
+            <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center gap-2.5">
+              <div className="w-5 h-5 rounded-md shrink-0 shadow-sm bg-slate-900 border border-slate-700" style={{ background: '#FFFFFF' }} />
+              <div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200">Dark Text</div>
+                <div className="font-mono text-[10px] text-slate-400">#FFFFFF</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </Card>
 
       {/* Configuration & Preferences */}
