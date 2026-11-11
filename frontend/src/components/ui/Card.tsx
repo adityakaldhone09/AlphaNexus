@@ -1,12 +1,18 @@
 import React from 'react';
 
-export const Card: React.FC<{ children: React.ReactNode; className?: string }> = ({
+export const Card: React.FC<{
+  children: React.ReactNode;
+  className?: string;
+  style?: React.CSSProperties;
+}> = ({
   children,
   className = '',
+  style,
 }) => {
   return (
     <div
       className={`bg-white dark:bg-[#0c1222] border border-slate-200 dark:border-slate-800/80 rounded-lg shadow-sm transition-all duration-150 ${className}`}
+      style={style}
     >
       {children}
     </div>
@@ -47,4 +53,3 @@ export const CardFooter: React.FC<{ children: React.ReactNode; className?: strin
 }) => {
   return <div className={`p-3 sm:p-4 bg-slate-50/50 dark:bg-slate-900/30 border-t border-slate-100 dark:border-slate-800/60 rounded-b-lg ${className}`}>{children}</div>;
 };
-
