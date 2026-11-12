@@ -1,12 +1,15 @@
 from datetime import datetime
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db, check_database_health, is_sqlite
 from app.database.mongodb import mongodb_manager
+from app.engines.rag.vector_store.mongodb_atlas import mongodb_atlas_store
 from app.core.registry import engine_registry
 from app.schemas.health import HealthResponse, EnginesSummaryResponse
 from app.services.audit_service import get_cached_integrations_status, run_integrations_audit
+from app.services.ingestion_service import ingestion_service
 
 router = APIRouter()
 
@@ -48,6 +51,33 @@ def refresh_system_health():
     }
 
 
+@router.post("/health/sync-data")
+def sync_live_market_data(
+    symbol: Optional[str] = Query(None, description="Specific symbol to sync, or all if omitted"),
+    news: bool = Query(True, description="Whether to also sync multi-source news"),
+    db: Session = Depends(get_db),
+):
+    """
+    Ingests live data from IndianAPI, NewsAPI, and Marketaux into Supabase PostgreSQL.
+    """
+    market_result = {}
+    if symbol:
+        market_result = ingestion_service.ingest_company_market_data(db, symbol)
+    else:
+        market_result = ingestion_service.sync_all_active_companies(db)
+
+    news_result = {}
+    if news:
+        news_result = ingestion_service.sync_multi_source_news(db, limit_per_source=10)
+
+    return {
+        "status": "success",
+        "market_data": market_result,
+        "news_data": news_result,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 @router.get("/health/config")
 def get_safe_system_configuration():
     """Expose operational configuration without credentials or connection strings."""
@@ -74,6 +104,8 @@ def get_safe_system_configuration():
             "configured": bool(mongodb_manager.uri),
             "database": mongodb_manager.db_name if mongodb_manager.uri else None,
             "connected": mongodb_manager.is_connected,
+            "vector_search_ready": mongodb_atlas_store.is_available,
+            "vector_index_name": settings.MONGODB_VECTOR_INDEX_NAME,
         },
         "llm": {
             "primary_provider": primary_llm,
@@ -102,11 +134,16 @@ def get_safe_system_configuration():
             "reranking_enabled": settings.RAG_RERANKING_ENABLED,
         },
         "integrations": {
+            "indianapi_configured": bool(settings.INDIANAPI_API_KEY),
             "dhan_configured": bool(
                 settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN
             ),
             "marketaux_configured": bool(settings.MARKETAUX_API_TOKEN),
+            "newsapi_configured": bool(settings.NEWSAPI_API_KEY),
             "fmp_configured": bool(settings.FMP_API_KEY),
+            "finnhub_configured": bool(settings.effective_finnhub_key),
+            "langfuse_configured": bool(settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY),
+            "sentry_configured": bool(settings.SENTRY_DSN),
             "supabase_storage_configured": bool(
                 settings.SUPABASE_URL and (settings.effective_supabase_service_role_key or settings.effective_supabase_anon_key)
             ),

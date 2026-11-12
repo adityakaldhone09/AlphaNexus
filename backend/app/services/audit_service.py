@@ -16,6 +16,11 @@ from app.engines.providers.groq import GroqProvider
 from app.engines.providers.fmp import FMPProvider
 from app.engines.providers.marketaux import MarketauxProvider
 from app.engines.providers.dhan import DhanHQProvider
+from app.integrations.market_data.indianapi import IndianAPIProvider
+from app.integrations.news_providers.newsapi import NewsAPIProvider
+from app.integrations.external_sources.finnhub import FinnhubProvider
+from app.database.mongodb import mongodb_manager
+from app.engines.rag.vector_store.mongodb_atlas import mongodb_atlas_store
 
 _audit_cache_lock = Lock()
 _last_audit_result: Dict[str, Any] | None = None
@@ -192,10 +197,36 @@ def get_cached_integrations_status() -> Dict[str, Any]:
         "error": None,
     })
 
+    mongo_configured = bool(mongodb_manager.uri)
+    mongo_connected = mongodb_manager.is_connected
+    results.append({
+        "provider": "MongoDB Atlas",
+        "status": "Connected" if mongo_connected else "Unavailable" if mongo_configured else "Not configured",
+        "configured": mongo_configured,
+        "operational": mongo_connected,
+        "model": f"Database: {mongodb_manager.db_name}" if mongo_configured else None,
+        "configured_model": mongodb_manager.db_name if mongo_configured else None,
+        "active_model": mongodb_manager.db_name if mongo_connected else None,
+        "last_successful_test": mongodb_manager._last_successful_check,
+        "error_category": None if mongo_connected else ("network" if mongo_configured else None),
+        "error_message": None if mongo_connected else mongodb_manager.connection_error,
+        "http_status": 200 if mongo_connected else None,
+        "latency_ms": 0,
+        "information": (
+            f"Connected to database '{mongodb_manager.db_name}'."
+            if mongo_connected
+            else mongodb_manager.connection_error or "MongoDB Atlas not configured."
+        ),
+        "error": None if mongo_connected else mongodb_manager.connection_error,
+    })
+
     configured_integrations = [
+        ("IndianAPI", bool(settings.INDIANAPI_API_KEY), "IndianAPI (stock.indianapi.in)"),
         ("DhanHQ", bool(settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN), "DhanHQ API"),
         ("Marketaux", bool(settings.MARKETAUX_API_TOKEN), "Marketaux API"),
+        ("NewsAPI", bool(settings.NEWSAPI_API_KEY), "NewsAPI v2"),
         ("Financial Modeling Prep (FMP)", bool(settings.FMP_API_KEY), "FMP API"),
+        ("Finnhub", bool(settings.effective_finnhub_key), "Finnhub API v1"),
         ("Langfuse", bool(settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY), "Langfuse"),
         ("Sentry", bool(settings.SENTRY_DSN), "Sentry SDK"),
     ]
@@ -307,6 +338,96 @@ def run_integrations_audit(probe_ai: bool = False) -> Dict[str, Any]:
         "information": f"Supabase private bucket '{settings.SUPABASE_STORAGE_BUCKET}' active and configured.",
         "error": None,
     })
+
+    # 4b-2. MongoDB Atlas & Atlas Vector Search
+    t0_mg = time.time()
+    mongo_health = mongodb_manager.check_health()
+    mongo_lat = round((time.time() - t0_mg) * 1000, 1)
+    mongo_configured = bool(mongodb_manager.uri)
+    mongo_connected = bool(mongo_health.get("connected"))
+
+    vs_check = (
+        mongodb_atlas_store.check_vector_search_ready()
+        if mongo_connected
+        else {
+            "ready": False,
+            "status": "Unavailable",
+            "reason": "MongoDB Atlas cluster is disconnected.",
+        }
+    )
+
+    results.append({
+        "provider": "MongoDB Atlas",
+        "status": "Connected" if mongo_connected else "Unavailable" if mongo_configured else "Not configured",
+        "configured": mongo_configured,
+        "operational": mongo_connected,
+        "model": f"Database: {mongodb_manager.db_name}" if mongo_configured else None,
+        "configured_model": mongodb_manager.db_name if mongo_configured else None,
+        "active_model": mongodb_manager.db_name if mongo_connected else None,
+        "server_version": mongo_health.get("server_version"),
+        "collections": mongo_health.get("collections", []),
+        "vector_index_status": vs_check.get("status"),
+        "vector_search_ready": vs_check.get("ready", False),
+        "last_successful_test": mongo_health.get("last_successful_check"),
+        "error_category": None if mongo_connected else ("network" if mongo_configured else None),
+        "error_message": None if mongo_connected else mongo_health.get("error"),
+        "http_status": 200 if mongo_connected else None,
+        "latency_ms": mongo_lat,
+        "information": (
+            f"Connected to database '{mongodb_manager.db_name}'. Vector Search: {vs_check.get('status')}."
+            if mongo_connected
+            else mongo_health.get("error") or "MongoDB Atlas is not configured."
+        ),
+        "error": None if mongo_connected else mongo_health.get("error"),
+        "remediation": mongo_health.get("remediation"),
+    })
+
+    # 4c. IndianAPI (Indian Market Intelligence, Quotes & Fundamentals)
+    t0 = time.time()
+    if settings.INDIANAPI_API_KEY:
+        try:
+            indian_provider = IndianAPIProvider()
+            check_res = indian_provider.check_availability()
+            lat = check_res.get("latency_ms", round((time.time() - t0) * 1000, 1))
+            status = check_res.get("status", "Unavailable")
+            results.append({
+                "provider": "IndianAPI",
+                "status": status,
+                "configured": True,
+                "operational": status in ("Connected", "Degraded"),
+                "model": "IndianAPI (stock.indianapi.in)",
+                "http_status": check_res.get("http_status", 200 if status == "Connected" else 500),
+                "latency_ms": lat,
+                "information": check_res.get("information", "Indian market intelligence stream active."),
+                "error": check_res.get("error"),
+                "error_category": check_res.get("error_category"),
+            })
+        except Exception as e:
+            lat = round((time.time() - t0) * 1000, 1)
+            results.append({
+                "provider": "IndianAPI",
+                "status": "Failed",
+                "configured": True,
+                "operational": False,
+                "model": None,
+                "http_status": 500,
+                "latency_ms": lat,
+                "information": "Exception connecting to IndianAPI.",
+                "error": str(e),
+                "error_category": "network",
+            })
+    else:
+        results.append({
+            "provider": "IndianAPI",
+            "status": "Not Configured",
+            "configured": False,
+            "operational": False,
+            "model": None,
+            "http_status": None,
+            "latency_ms": 0,
+            "information": "INDIANAPI_API_KEY is not configured.",
+            "error": None,
+        })
 
     # 5. DhanHQ API (Market Data & Account)
     t0 = time.time()
@@ -452,6 +573,53 @@ def run_integrations_audit(probe_ai: bool = False) -> Dict[str, Any]:
             "error": None,
         })
 
+    # 6b. NewsAPI (Global & Regional Financial Journalism)
+    t0 = time.time()
+    if settings.NEWSAPI_API_KEY:
+        try:
+            news_provider = NewsAPIProvider()
+            check_res = news_provider.check_availability()
+            lat = check_res.get("latency_ms", round((time.time() - t0) * 1000, 1))
+            status = check_res.get("status", "Unavailable")
+            results.append({
+                "provider": "NewsAPI",
+                "status": status,
+                "configured": True,
+                "operational": status in ("Connected", "Degraded"),
+                "model": "NewsAPI v2",
+                "http_status": check_res.get("http_status", 200 if status == "Connected" else 500),
+                "latency_ms": lat,
+                "information": check_res.get("information", "Global business news feeds active."),
+                "error": check_res.get("error"),
+                "error_category": check_res.get("error_category"),
+            })
+        except Exception as e:
+            lat = round((time.time() - t0) * 1000, 1)
+            results.append({
+                "provider": "NewsAPI",
+                "status": "Failed",
+                "configured": True,
+                "operational": False,
+                "model": None,
+                "http_status": 500,
+                "latency_ms": lat,
+                "information": "Exception connecting to NewsAPI.",
+                "error": str(e),
+                "error_category": "network",
+            })
+    else:
+        results.append({
+            "provider": "NewsAPI",
+            "status": "Not Configured",
+            "configured": False,
+            "operational": False,
+            "model": None,
+            "http_status": None,
+            "latency_ms": 0,
+            "information": "NEWSAPI_API_KEY is not configured.",
+            "error": None,
+        })
+
     # 7. Financial Modeling Prep (FMP)
     t0 = time.time()
     if settings.FMP_API_KEY:
@@ -509,6 +677,53 @@ def run_integrations_audit(probe_ai: bool = False) -> Dict[str, Any]:
             "http_status": None,
             "latency_ms": 0,
             "information": "FMP_API_KEY is not set.",
+            "error": None,
+        })
+
+    # 7b. Finnhub (Global Market Quotes & Company News)
+    t0 = time.time()
+    if settings.effective_finnhub_key:
+        try:
+            finnhub_provider = FinnhubProvider()
+            check_res = finnhub_provider.check_availability()
+            lat = check_res.get("latency_ms", round((time.time() - t0) * 1000, 1))
+            status = check_res.get("status", "Unavailable")
+            results.append({
+                "provider": "Finnhub",
+                "status": status,
+                "configured": True,
+                "operational": status in ("Connected", "Degraded"),
+                "model": "Finnhub API v1",
+                "http_status": check_res.get("http_status", 200 if status == "Connected" else 500),
+                "latency_ms": lat,
+                "information": check_res.get("information", "Global equity data active."),
+                "error": check_res.get("error"),
+                "error_category": check_res.get("error_category"),
+            })
+        except Exception as e:
+            lat = round((time.time() - t0) * 1000, 1)
+            results.append({
+                "provider": "Finnhub",
+                "status": "Failed",
+                "configured": True,
+                "operational": False,
+                "model": None,
+                "http_status": 500,
+                "latency_ms": lat,
+                "information": "Exception connecting to Finnhub.",
+                "error": str(e),
+                "error_category": "network",
+            })
+    else:
+        results.append({
+            "provider": "Finnhub",
+            "status": "Not Configured",
+            "configured": False,
+            "operational": False,
+            "model": None,
+            "http_status": None,
+            "latency_ms": 0,
+            "information": "FINHUB_API_KEY is not configured.",
             "error": None,
         })
 

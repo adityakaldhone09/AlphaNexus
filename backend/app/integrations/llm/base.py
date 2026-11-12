@@ -97,7 +97,7 @@ def get_provider_health(provider: str, configured_model: str, configured: bool) 
                 "provider": provider,
                 "configured_model": configured_model,
                 "active_model": None,
-                "connection_status": "Configured",
+                "connection_status": "Unavailable",
                 "last_successful_test": None,
                 "error_category": None,
                 "error_message": "Connection has not been tested.",

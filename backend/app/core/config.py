@@ -53,7 +53,15 @@ class Settings(BaseSettings):
 
     # MongoDB Atlas Vector Search
     MONGODB_URI: Optional[str] = None
-    MONGODB_DB: str = "equilens_rag"
+    MONGODB_DB: str = "alphanexus_rag"
+    MONGODB_DATABASE: Optional[str] = None
+    MONGODB_VECTOR_INDEX_NAME: str = "vector_index"
+    MONGODB_TIMEOUT_MS: int = 5000
+    MONGODB_ALLOW_IN_MEMORY_FALLBACK: bool = False
+
+    @property
+    def effective_mongodb_db(self) -> str:
+        return self.MONGODB_DB or self.MONGODB_DATABASE or "alphanexus_rag"
 
     # AI & LLM Providers
     GEMINI_API_KEY: Optional[str] = None
@@ -84,11 +92,23 @@ class Settings(BaseSettings):
     DHAN_CLIENT_ID: Optional[str] = None
     DHAN_ACCESS_TOKEN: Optional[str] = None
 
-    # Financial News Provider
-    MARKETAUX_API_TOKEN: Optional[str] = None
+    # Indian Market Intelligence API (IndianAPI)
+    INDIANAPI_API_KEY: Optional[str] = None
+    INDIANAPI_BASE_URL: str = "https://stock.indianapi.in"
+    INDIANAPI_TIMEOUT: float = 15.0
 
-    # Fundamentals Provider (Optional)
+    # Financial News Providers
+    MARKETAUX_API_TOKEN: Optional[str] = None
+    NEWSAPI_API_KEY: Optional[str] = None
+
+    # Global Market & Fundamentals Providers
     FMP_API_KEY: Optional[str] = None
+    FINHUB_API_KEY: Optional[str] = None
+    FINNHUB_API_KEY: Optional[str] = None
+
+    @property
+    def effective_finnhub_key(self) -> Optional[str]:
+        return self.FINNHUB_API_KEY or self.FINHUB_API_KEY
 
     # Observability and Monitoring
     LANGFUSE_PUBLIC_KEY: Optional[str] = None

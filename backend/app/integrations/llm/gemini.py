@@ -66,7 +66,19 @@ class GeminiProvider(BaseLLMProvider):
         candidates = [model for model in available if model != self.model_name]
         if not candidates:
             raise RuntimeError("Model not found: no accessible Gemini generateContent model is available.")
-        return sorted(candidates, key=lambda model: ("flash" not in model.lower(), model))[0]
+        # Prioritize newer generation models (gemini-3) and flash variants over older or deprecated tiers
+        def _model_sort_key(m: str):
+            score = 0
+            m_lower = m.lower()
+            if "gemini-3" in m_lower:
+                score -= 20
+            if "flash" in m_lower:
+                score -= 10
+            if "2.5" in m_lower:
+                score += 5
+            return (score, m)
+
+        return sorted(candidates, key=_model_sort_key)[0]
 
     def check_availability(self, probe: bool = False) -> Dict[str, Any]:
         if not self.api_key:
