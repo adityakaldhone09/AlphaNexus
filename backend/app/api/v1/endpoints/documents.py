@@ -11,6 +11,7 @@ from app.models.document import Document
 from app.models.company import Company
 from app.engines.rag.service import rag_service
 from app.services.supabase_storage import supabase_storage
+from app.database.mongodb import mongodb_manager
 from app.schemas.document import DocumentResponse, DocumentUploadResponse, DocumentProcessResponse
 
 router = APIRouter()
@@ -188,6 +189,13 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
             storage_path=storage_path or "",
             local_path=doc.file_path,
         )
+
+    # Clean up associated document chunks in MongoDB Atlas
+    try:
+        if mongodb_manager.is_connected:
+            mongodb_manager.delete_document_chunks(str(doc.id))
+    except Exception as e:
+        pass
 
     db.delete(doc)
     db.commit()

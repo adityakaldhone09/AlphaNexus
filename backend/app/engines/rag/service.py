@@ -200,40 +200,45 @@ class RAGService:
             vector_store.delete_document_chunks(db, str(doc.id))
             stored = vector_store.store_chunks(db, chunks)
 
-            # Persist to MongoDB Atlas / Unified RAG Collection
-            try:
-                mongodb_manager.delete_document_chunks(str(doc.id))
-                mongodb_manager.store_document({
-                    "_id": str(doc.id),
-                    "company_id": str(doc.company_id),
-                    "filename": filename,
-                    "document_type": doc_type,
-                    "financial_year": fy,
-                    "quarter": quarter,
-                    "total_pages": len(pages_data),
-                    "total_chunks": len(chunks),
-                    "file_checksum": file_hash,
-                })
-                mongodb_manager.store_chunks([
-                    {
-                        "chunk_id": str(c.get("chunk_id") or uuid.uuid4()),
-                        "document_id": str(doc.id),
+            # Persist to MongoDB Atlas if connected
+            if mongodb_manager.is_connected:
+                try:
+                    mongodb_manager.delete_document_chunks(str(doc.id))
+                    mongodb_manager.store_document({
+                        "_id": str(doc.id),
                         "company_id": str(doc.company_id),
-                        "symbol": symbol,
-                        "financial_year": fy,
+                        "filename": filename,
                         "document_type": doc_type,
-                        "chunk_index": c.get("chunk_index", 0),
-                        "page_number": c.get("page_number", 1),
-                        "section": c.get("section", ""),
-                        "content": c.get("content", ""),
-                        "embedding": c.get("embedding", []),
-                        "token_count": c.get("token_count", 0),
-                    }
-                    for c in chunks
-                ])
-                logger.info(f"[RAG] Synced {len(chunks)} chunks to MongoDB.")
-            except Exception as mongo_err:
-                logger.warning(f"[RAG] MongoDB sync notice: {mongo_err}")
+                        "financial_year": fy,
+                        "quarter": quarter,
+                        "total_pages": len(pages_data),
+                        "total_chunks": len(chunks),
+                        "file_checksum": file_hash,
+                    })
+                    mongodb_manager.store_chunks([
+                        {
+                            "chunk_id": str(c.get("chunk_id") or uuid.uuid4()),
+                            "document_id": str(doc.id),
+                            "company_id": str(doc.company_id),
+                            "symbol": symbol,
+                            "financial_year": fy,
+                            "document_type": doc_type,
+                            "chunk_index": c.get("chunk_index", 0),
+                            "page_number": c.get("page_number", 1),
+                            "section": c.get("section", ""),
+                            "content": c.get("content", ""),
+                            "embedding": c.get("embedding", []),
+                            "token_count": c.get("token_count", 0),
+                        }
+                        for c in chunks
+                    ])
+                    logger.info(f"[RAG] Synced {len(chunks)} chunks to MongoDB Atlas.")
+                except Exception as mongo_err:
+                    logger.warning(f"[RAG] MongoDB sync notice: {mongo_err}")
+            else:
+                logger.info(
+                    "[RAG] MongoDB Atlas is disconnected; document chunks persisted in authoritative PostgreSQL vector store."
+                )
 
             # ── 7. Update document record ──────────────────────────────
             doc.status = "PROCESSED"

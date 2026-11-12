@@ -1,121 +1,146 @@
 """
-EquiLens AI – MongoDB & Atlas Vector Search Database Manager
-============================================================
-Handles connection pooling, Atlas Vector Search compatibility checks,
-collection management, and graceful local simulation fallback.
+ALPHANEXUS – MongoDB Atlas & Vector Search Database Manager
+===========================================================
+Production MongoDB client lifecycle manager for AlphaNexus RAG document intelligence.
+Handles connection pooling, index verification, Atlas Vector Search compatibility,
+and explicit error reporting without silent data loss.
 """
 
 import os
 import certifi
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from pymongo import MongoClient
 from pymongo.collection import Collection
 from pymongo.database import Database
+from pymongo.errors import PyMongoError, ServerSelectionTimeoutError
+
 from app.core.config import settings
 from app.core.logging import logger
+from app.database.collections import (
+    COLLECTION_DOCUMENTS,
+    COLLECTION_CHUNKS,
+    COLLECTION_CONVERSATIONS,
+    COLLECTION_CITATIONS,
+    COLLECTION_CONFIGURATIONS,
+    COLLECTION_EVALUATIONS,
+    ALL_COLLECTIONS,
+    ensure_all_collection_indexes,
+    get_existing_collection_indexes,
+)
 
-# In-memory document & chunk storage fallback when Atlas is unreachable
+
+class MongoDBUnavailableError(RuntimeError):
+    """Raised when an operation is attempted while MongoDB Atlas is disconnected."""
+    pass
+
+
+# Optional in-memory fallback ONLY when explicitly enabled by MONGODB_ALLOW_IN_MEMORY_FALLBACK
 _simulated_db: Dict[str, List[Dict[str, Any]]] = {
-    "rag_documents": [],
-    "rag_chunks": [],
-    "rag_conversations": [],
-    "rag_citations": [],
-    "rag_configurations": [],
+    COLLECTION_DOCUMENTS: [],
+    COLLECTION_CHUNKS: [],
+    COLLECTION_CONVERSATIONS: [],
+    COLLECTION_CITATIONS: [],
+    COLLECTION_CONFIGURATIONS: [],
+    COLLECTION_EVALUATIONS: [],
 }
 
 
 class MongoDBManager:
     """
-    Manages MongoDB client lifecycle, collections, and Atlas Vector Search index creation.
+    Manages MongoDB Atlas connection, collections, and index lifecycle.
+    Never exposes raw connection strings, usernames, or passwords.
     """
 
     def __init__(self):
-        self.uri = getattr(settings, "MONGODB_URI", None) or os.getenv("MONGODB_URI", "")
-        self.db_name = getattr(settings, "MONGODB_DB", None) or os.getenv("MONGODB_DB", "equilens_rag")
+        self.uri: Optional[str] = getattr(settings, "MONGODB_URI", None) or os.getenv("MONGODB_URI", "")
+        self.db_name: str = getattr(settings, "effective_mongodb_db", None) or os.getenv("MONGODB_DB", "alphanexus_rag")
+        self.timeout_ms: int = getattr(settings, "MONGODB_TIMEOUT_MS", 5000)
+        self.allow_fallback: bool = getattr(settings, "MONGODB_ALLOW_IN_MEMORY_FALLBACK", False)
+
         self._client: Optional[MongoClient] = None
         self._db: Optional[Database] = None
-        self._is_connected = False
+        self._is_connected: bool = False
         self._connection_error: Optional[str] = None
-        self._atlas_search_ready = False
+        self._last_successful_check: Optional[str] = None
+        self._server_version: Optional[str] = None
+
         self._connect()
 
-    def _connect(self):
+    def _connect(self) -> None:
+        """Establishes connection to MongoDB Atlas with TLS verification."""
         if not self.uri:
             self._connection_error = "MONGODB_URI is not configured in environment."
             self._is_connected = False
             return
 
         try:
-            # Use certifi for macOS TLS verification
             self._client = MongoClient(
                 self.uri,
+                tls=True,
                 tlsCAFile=certifi.where(),
-                serverSelectionTimeoutMS=3000,
-                connectTimeoutMS=3000,
-                socketTimeoutMS=3000,
+                serverSelectionTimeoutMS=self.timeout_ms,
+                connectTimeoutMS=self.timeout_ms,
+                socketTimeoutMS=self.timeout_ms,
+                appname="AlphaNexus-Backend",
             )
-            # Validate connection
+            # Ping to confirm live cluster connectivity
             self._client.admin.command("ping")
             self._db = self._client[self.db_name]
+            build_info = self._client.admin.command("buildInfo")
+            self._server_version = build_info.get("version", "Unknown")
+
             self._is_connected = True
             self._connection_error = None
-            logger.info(f"Connected successfully to MongoDB Atlas database: {self.db_name}")
-            self._ensure_indexes()
+            self._last_successful_check = datetime.now(timezone.utc).isoformat()
+            logger.info("Connected successfully to MongoDB Atlas database: %s", self.db_name)
+
+            # Ensure all standard collection indexes
+            ensure_all_collection_indexes(self._db)
+
         except Exception as e:
-            err_msg = str(e)
             self._is_connected = False
-            if "tlsv1 alert internal error" in err_msg or "SSL handshake failed" in err_msg:
+            self._db = None
+            err_msg = str(e)
+            if "tlsv1 alert internal error" in err_msg.lower() or "ssl handshake failed" in err_msg.lower():
                 self._connection_error = (
-                    "MongoDB Atlas Network Access Block: Current machine IP is not whitelisted. "
-                    "Add your current IP (or 0.0.0.0/0) in MongoDB Atlas Console -> Security -> Network Access."
+                    "MongoDB Atlas Network Access Block: The application IP address is not allowlisted in "
+                    "MongoDB Atlas Console -> Security -> Network Access. Add your IP or 0.0.0.0/0 to enable connectivity."
                 )
+            elif "authentication failed" in err_msg.lower():
+                self._connection_error = "MongoDB Atlas Authentication Failed: Invalid username or password in MONGODB_URI."
             else:
-                self._connection_error = f"MongoDB connection error: {err_msg}"
-            logger.warning(f"MongoDB connection notice: {self._connection_error}. Running in resilient hybrid mode.")
+                self._connection_error = f"MongoDB connection failed: {type(e).__name__}"
+            logger.warning("MongoDB connection status: %s", self._connection_error)
 
-    def _ensure_indexes(self):
-        """Creates standard metadata and unique indexes on MongoDB collections."""
-        if not self._is_connected or self._db is None:
-            return
-        try:
-            # 1. rag_documents indexes
-            docs = self._db["rag_documents"]
-            docs.create_index([("company_id", 1), ("financial_year", 1)])
-            docs.create_index("file_checksum", unique=True, sparse=True)
-            docs.create_index("document_type")
-            docs.create_index("created_at")
-
-            # 2. rag_chunks indexes
-            chunks = self._db["rag_chunks"]
-            chunks.create_index([("document_id", 1), ("chunk_index", 1)])
-            chunks.create_index([("company_id", 1), ("document_type", 1)])
-            chunks.create_index("financial_year")
-
-            # 3. rag_conversations indexes
-            convs = self._db["rag_conversations"]
-            convs.create_index("session_id", unique=True)
-            convs.create_index("company_id")
-
-            # 4. rag_citations indexes
-            cites = self._db["rag_citations"]
-            cites.create_index("session_id")
-            cites.create_index("document_id")
-
-            logger.info("MongoDB collection indexes verified.")
-        except Exception as e:
-            logger.warning(f"Error ensuring MongoDB collection indexes: {e}")
+    def reconnect(self) -> bool:
+        """Manually re-attempts connection to MongoDB Atlas."""
+        self._connect()
+        return self._is_connected
 
     @property
     def is_connected(self) -> bool:
         return self._is_connected
 
+    @is_connected.setter
+    def is_connected(self, value: bool) -> None:
+        self._is_connected = value
+
     @property
     def connection_error(self) -> Optional[str]:
         return self._connection_error
 
+    @connection_error.setter
+    def connection_error(self, value: Optional[str]) -> None:
+        self._connection_error = value
+
     @property
     def database(self) -> Optional[Database]:
         return self._db
+
+    @database.setter
+    def database(self, value: Optional[Database]) -> None:
+        self._db = value
 
     def get_collection(self, name: str) -> Optional[Collection]:
         if self._is_connected and self._db is not None:
@@ -123,75 +148,109 @@ class MongoDBManager:
         return None
 
     def check_health(self) -> Dict[str, Any]:
-        """Returns comprehensive diagnostic health check of MongoDB & Vector Search."""
-        if self._is_connected and self._client is not None:
+        """
+        Returns comprehensive diagnostic health check of MongoDB.
+        Never marks MongoDB or vector search as healthy when disconnected.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if self._is_connected and self._client is not None and self._db is not None:
             try:
-                build_info = self._client.admin.command("buildInfo")
-                db_names = self._client.list_database_names()
-                colls = self._db.list_collection_names() if self._db is not None else []
+                self._client.admin.command("ping")
+                existing_colls = self._db.list_collection_names()
+                indexes = get_existing_collection_indexes(self._db)
+                self._last_successful_check = now_iso
                 return {
+                    "configured": True,
                     "connected": True,
-                    "status": "Healthy",
-                    "deployment_type": "MongoDB Atlas ReplicaSet",
-                    "version": build_info.get("version", "Unknown"),
+                    "verified": True,
+                    "status": "Connected",
+                    "operational": True,
                     "database": self.db_name,
-                    "collections": colls,
-                    "total_databases": len(db_names),
-                    "atlas_vector_search_supported": True,
+                    "server_version": self._server_version,
+                    "deployment_type": "MongoDB Atlas ReplicaSet",
+                    "collections": existing_colls,
+                    "indexes": indexes,
+                    "last_successful_check": self._last_successful_check,
                     "error": None,
                 }
             except Exception as e:
-                return {
-                    "connected": False,
-                    "status": "Degraded",
-                    "deployment_type": "MongoDB Atlas",
-                    "database": self.db_name,
-                    "atlas_vector_search_supported": False,
-                    "error": str(e),
-                }
+                self._is_connected = False
+                self._connection_error = f"MongoDB ping failed: {type(e).__name__}"
 
         return {
+            "configured": bool(self.uri),
             "connected": False,
-            "status": "Degraded (Simulated Hybrid Fallback Active)",
-            "deployment_type": "Simulated Local MongoDB",
+            "verified": False,
+            "status": "Unavailable" if self.uri else "Not configured",
+            "operational": False,
             "database": self.db_name,
-            "atlas_vector_search_supported": False,
-            "error": self._connection_error or "Not connected to MongoDB.",
-            "remediation": "Add current IP to MongoDB Atlas Network Access whitelist to enable live Atlas Vector Search.",
+            "server_version": None,
+            "deployment_type": "Disconnected",
+            "collections": [],
+            "indexes": {},
+            "last_successful_check": self._last_successful_check,
+            "error": self._connection_error or "MongoDB Atlas is unreachable.",
+            "remediation": (
+                "Ensure MONGODB_URI is populated and the host IP is added to "
+                "MongoDB Atlas Console -> Security -> Network Access."
+                if self.uri
+                else "Configure MONGODB_URI in the environment."
+            ),
         }
 
     # -------------------------------------------------------------------------
-    # Unified document & chunk storage interface (Atlas + Local Fallback)
+    # Unified Document & Chunk Storage Interface
     # -------------------------------------------------------------------------
 
     def store_document(self, doc_data: Dict[str, Any]) -> str:
-        """Stores a document record in rag_documents."""
+        """
+        Stores document metadata in rag_documents.
+        In production, raises MongoDBUnavailableError if Atlas is unreachable,
+        preventing silent data loss.
+        """
         if self._is_connected and self._db is not None:
-            res = self._db["rag_documents"].insert_one(doc_data)
+            res = self._db[COLLECTION_DOCUMENTS].insert_one(doc_data)
             return str(res.inserted_id)
-        else:
-            _simulated_db["rag_documents"].append(doc_data)
-            return str(doc_data.get("_id") or len(_simulated_db["rag_documents"]))
+
+        if self.allow_fallback:
+            logger.warning("[MongoDB] Using explicitly allowed in-memory fallback for store_document.")
+            _simulated_db[COLLECTION_DOCUMENTS].append(doc_data)
+            return str(doc_data.get("_id") or len(_simulated_db[COLLECTION_DOCUMENTS]))
+
+        raise MongoDBUnavailableError(
+            f"Cannot store document: MongoDB Atlas is disconnected. ({self._connection_error})"
+        )
 
     def store_chunks(self, chunks: List[Dict[str, Any]]) -> int:
-        """Stores document chunks with embeddings in rag_chunks."""
+        """
+        Stores document chunks with embeddings in rag_chunks.
+        In production, raises MongoDBUnavailableError if Atlas is unreachable.
+        """
         if not chunks:
             return 0
+
         if self._is_connected and self._db is not None:
-            res = self._db["rag_chunks"].insert_many(chunks)
+            res = self._db[COLLECTION_CHUNKS].insert_many(chunks)
             return len(res.inserted_ids)
-        else:
-            _simulated_db["rag_chunks"].extend(chunks)
+
+        if self.allow_fallback:
+            logger.warning("[MongoDB] Using explicitly allowed in-memory fallback for store_chunks.")
+            _simulated_db[COLLECTION_CHUNKS].extend(chunks)
             return len(chunks)
+
+        raise MongoDBUnavailableError(
+            f"Cannot store chunks: MongoDB Atlas is disconnected. ({self._connection_error})"
+        )
 
     def find_chunks(self, query_filter: Dict[str, Any], limit: int = 20) -> List[Dict[str, Any]]:
         """Queries chunks with metadata filters."""
         if self._is_connected and self._db is not None:
-            cursor = self._db["rag_chunks"].find(query_filter).limit(limit)
+            cursor = self._db[COLLECTION_CHUNKS].find(query_filter).limit(limit)
             return list(cursor)
-        else:
+
+        if self.allow_fallback:
             res = []
-            for c in _simulated_db["rag_chunks"]:
+            for c in _simulated_db[COLLECTION_CHUNKS]:
                 match = True
                 for k, v in query_filter.items():
                     if c.get(k) != v:
@@ -203,21 +262,30 @@ class MongoDBManager:
                     break
             return res
 
+        raise MongoDBUnavailableError(
+            f"Cannot query chunks: MongoDB Atlas is disconnected. ({self._connection_error})"
+        )
+
     def delete_document_chunks(self, document_id: str) -> int:
-        """Removes all chunks for a document."""
+        """Removes all chunks and metadata for a document."""
         if self._is_connected and self._db is not None:
-            res = self._db["rag_chunks"].delete_many({"document_id": document_id})
-            self._db["rag_documents"].delete_one({"_id": document_id})
+            res = self._db[COLLECTION_CHUNKS].delete_many({"document_id": document_id})
+            self._db[COLLECTION_DOCUMENTS].delete_one({"_id": document_id})
             return res.deleted_count
-        else:
-            prev = len(_simulated_db["rag_chunks"])
-            _simulated_db["rag_chunks"] = [
-                c for c in _simulated_db["rag_chunks"] if str(c.get("document_id")) != str(document_id)
+
+        if self.allow_fallback:
+            prev = len(_simulated_db[COLLECTION_CHUNKS])
+            _simulated_db[COLLECTION_CHUNKS] = [
+                c for c in _simulated_db[COLLECTION_CHUNKS] if str(c.get("document_id")) != str(document_id)
             ]
-            _simulated_db["rag_documents"] = [
-                d for d in _simulated_db["rag_documents"] if str(d.get("_id")) != str(document_id)
+            _simulated_db[COLLECTION_DOCUMENTS] = [
+                d for d in _simulated_db[COLLECTION_DOCUMENTS] if str(d.get("_id")) != str(document_id)
             ]
-            return prev - len(_simulated_db["rag_chunks"])
+            return prev - len(_simulated_db[COLLECTION_CHUNKS])
+
+        raise MongoDBUnavailableError(
+            f"Cannot delete document chunks: MongoDB Atlas is disconnected. ({self._connection_error})"
+        )
 
 
 # Global singleton instance
