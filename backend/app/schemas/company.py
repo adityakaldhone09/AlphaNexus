@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, UUID4, ConfigDict
 
@@ -27,10 +27,12 @@ class CompanyBase(BaseModel):
 
 
 class CompanyResponse(CompanyBase):
-    id: UUID4
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
+    id: Optional[UUID4] = None
+    is_active: bool = True
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    status: Optional[str] = "In Database"
+    is_registered: Optional[bool] = True
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -38,3 +40,21 @@ class CompanyResponse(CompanyBase):
 class CompanyDetailResponse(CompanyResponse):
     pass
 
+
+class CompanySearchResult(CompanyBase):
+    id: Optional[UUID4] = None
+    status: str = "In Database"
+    is_registered: bool = True
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DiscoverCompanyRequest(BaseModel):
+    identifier: str
+
+
+class SyncCompanyResponse(BaseModel):
+    message: str
+    refreshed_count: int
+    seeded_identifiers: int
+    timestamp: str

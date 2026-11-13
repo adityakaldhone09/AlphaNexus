@@ -6,6 +6,8 @@ import {
   ResponsiveContainer, LineChart, Line, Area, AreaChart, Legend,
 } from 'recharts';
 import { ANButton } from '../components/shared/ANButton';
+import { UniversalCompanySelector } from '../components/shared/UniversalCompanySelector';
+import { useCompanyStore } from '../stores/companyStore';
 import { api } from '../services/api';
 import type { Company, FinancialMetric } from '../types';
 
@@ -30,38 +32,40 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export const FinancialAnalyticsPage: React.FC = () => {
   const [companies,  setCompanies]  = useState<Company[]>([]);
-  const [selected,   setSelected]   = useState('');
+  const { selectedCompany, setSelectedCompany } = useCompanyStore();
   const [metrics,    setMetrics]    = useState<FinancialMetric[]>([]);
   const [ratios,     setRatios]     = useState<Record<string, any>>({});
   const [loading,    setLoading]    = useState(false);
   const [activeMetric, setActiveMetric] = useState('revenue');
 
   useEffect(() => {
-    api.getCompanies().then((d) => {
-      setCompanies(d);
-      if (d.length) setSelected(d[0].id);
-    });
+    if (!selectedCompany) {
+      api.getCompanies().then((d) => {
+        setCompanies(d);
+        if (d.length) setSelectedCompany(d[0]);
+      });
+    } else {
+      api.getCompanies().then(setCompanies);
+    }
   }, []);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selectedCompany?.id) return;
     setLoading(true);
     Promise.all([
-      api.getCompanyFinancials(selected),
-      api.getCompanyRatios(selected),
+      api.getCompanyFinancials(selectedCompany.id),
+      api.getCompanyRatios(selectedCompany.id),
     ]).then(([m, r]) => {
       setMetrics(m);
       setRatios(r.computed_metrics ?? {});
     }).finally(() => setLoading(false));
-  }, [selected]);
+  }, [selectedCompany?.id]);
 
   // Build chart data for active metric
   const chartData = metrics
     .filter((m) => m.metric_name === activeMetric)
     .sort((a, b) => a.financial_year.localeCompare(b.financial_year))
     .map((m) => ({ fy: m.financial_year, value: m.value, unit: m.unit }));
-
-  const selectedCompany = companies.find((c) => c.id === selected);
 
   const ratioItems = [
     { key: 'ebitda_margin',         label: 'EBITDA Margin',    suffix: '%' },
@@ -85,23 +89,11 @@ export const FinancialAnalyticsPage: React.FC = () => {
         </p>
       </motion.div>
 
-      {/* Company Selector */}
-      <div className="flex flex-wrap gap-3 items-center">
-        <Building2 className="w-4 h-4" style={{ color: 'var(--text-4)' }} />
-        {companies.map((c) => (
-          <button
-            key={c.id}
-            onClick={() => setSelected(c.id)}
-            className="px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
-            style={{
-              background: selected === c.id ? 'var(--brand)' : 'var(--surface-2)',
-              color: selected === c.id ? '#fff' : 'var(--text-2)',
-              border: `1px solid ${selected === c.id ? 'var(--brand)' : 'var(--border)'}`,
-            }}
-          >
-            {c.symbol}
-          </button>
-        ))}
+      {/* Universal Company Selector */}
+      <div className="max-w-md">
+        <UniversalCompanySelector
+          placeholder="Select or search any Indian equity..."
+        />
       </div>
 
       {/* KPIs */}

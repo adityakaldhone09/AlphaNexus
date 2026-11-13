@@ -27,6 +27,7 @@ import type {
   AgentStatus,
 } from '../features/research/types/research.types';
 import { api } from '../services/api';
+import { useCompanyStore } from '../stores/companyStore';
 import type { Company } from '../types';
 
 // Sample prompts for the empty state
@@ -62,10 +63,17 @@ export const AIResearchPage: React.FC = () => {
   const [sessions, setSessions] = useState<ResearchSession[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+  const { selectedCompany: storeCompany } = useCompanyStore();
   const [mode, setMode] = useState<ResearchMode>('quick');
   const [query, setQuery] = useState('');
-  const [companyId, setCompanyId] = useState('');
+  const [companyId, setCompanyId] = useState(storeCompany?.id || '');
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (storeCompany?.id && !companyId) {
+      setCompanyId(storeCompany.id);
+    }
+  }, [storeCompany]);
 
   // Load initial data
   useEffect(() => {
@@ -87,7 +95,7 @@ export const AIResearchPage: React.FC = () => {
 
   const handleSubmit = () => {
     if (!query.trim() || state.isStreaming) return;
-    const selectedCompany = companies.find((c) => c.id === companyId);
+    const selectedCompany = companies.find((c) => c.id === companyId) || storeCompany;
     submit(query, mode, selectedCompany?.symbol, companyId || undefined);
     setQuery('');
   };
@@ -122,7 +130,7 @@ export const AIResearchPage: React.FC = () => {
     setQuery(prompt.query);
   };
 
-  const selectedCompany = companies.find((c) => c.id === companyId);
+  const selectedCompany = companies.find((c) => c.id === companyId) || storeCompany;
 
   return (
     <div

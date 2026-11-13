@@ -25,9 +25,11 @@ async def lifespan(app: FastAPI):
     # Check and initialize seed demo data if in demo mode
     try:
         from app.services.seed_service import seed_initial_market_data
+        from app.services.company_discovery import company_discovery_service
         db = SessionLocal()
         try:
             seed_initial_market_data(db)
+            company_discovery_service.seed_universe_identifiers(db)
         finally:
             db.close()
     except Exception as e:

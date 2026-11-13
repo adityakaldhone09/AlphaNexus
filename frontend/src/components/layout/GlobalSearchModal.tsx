@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Building2, TrendingUp, ArrowRight, X } from 'lucide-react';
+import { Search, Building2, TrendingUp, ArrowRight, X, Sparkles } from 'lucide-react';
 import { api } from '../../services/api';
 import { Company } from '../../types';
 import { Badge } from '../ui/Badge';
+import { useCompanyStore } from '../../stores/companyStore';
 
 interface GlobalSearchModalProps {
   isOpen: boolean;
@@ -44,9 +45,12 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({ isOpen, on
     return () => clearTimeout(timeout);
   }, [query]);
 
-  const handleSelect = (symbol: string) => {
+  const { setSelectedCompany } = useCompanyStore();
+
+  const handleSelect = async (comp: Company) => {
+    setSelectedCompany(comp);
     onClose();
-    navigate(`/company/${symbol}`);
+    navigate(`/company/${comp.symbol}`);
   };
 
   if (!isOpen) return null;
@@ -86,12 +90,12 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({ isOpen, on
               </div>
               {results.map((c) => (
                 <button
-                  key={c.id}
-                  onClick={() => handleSelect(c.symbol)}
+                  key={c.symbol}
+                  onClick={() => handleSelect(c)}
                   className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-850/80 transition-colors text-left group"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20 flex items-center justify-center font-bold text-xs">
+                    <div className="w-9 h-9 rounded bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20 flex items-center justify-center font-bold text-xs font-mono">
                       {c.symbol.slice(0, 3)}
                     </div>
                     <div>
@@ -100,10 +104,17 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({ isOpen, on
                           {c.symbol}
                         </span>
                         <Badge variant="terminal" size="xs">
-                          {c.exchange}
+                          {c.exchange || 'NSE'}
                         </Badge>
+                        {c.status === 'Ready to Discover' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-medium flex items-center gap-1">
+                            <Sparkles className="w-2.5 h-2.5" /> Ready to Discover
+                          </span>
+                        )}
                       </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1">{c.name}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1">
+                        {c.name} {c.sector ? `· ${c.sector}` : ''}
+                      </p>
                     </div>
                   </div>
 

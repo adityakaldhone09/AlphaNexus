@@ -6,37 +6,39 @@ import {
   Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
 import { ANButton } from '../components/shared/ANButton';
+import { UniversalCompanySelector } from '../components/shared/UniversalCompanySelector';
+import { useCompanyStore } from '../stores/companyStore';
 import { api } from '../services/api';
 import type { Company, ForecastResponseData } from '../types';
 
 const METRICS = ['revenue', 'net_profit', 'ebitda', 'eps'];
 
 export const ForecastsPage: React.FC = () => {
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [selected,  setSelected]  = useState('');
+  const { selectedCompany, setSelectedCompany } = useCompanyStore();
   const [metric,    setMetric]    = useState('revenue');
   const [forecast,  setForecast]  = useState<ForecastResponseData | null>(null);
   const [loading,   setLoading]   = useState(false);
   const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
-    api.getCompanies().then((d) => {
-      setCompanies(d);
-      if (d.length) setSelected(d[0].id);
-    });
+    if (!selectedCompany) {
+      api.getCompanies().then((d) => {
+        if (d.length) setSelectedCompany(d[0]);
+      });
+    }
   }, []);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selectedCompany?.id) return;
     setLoading(true);
-    api.getForecasts(selected, metric).then(setForecast).catch(() => setForecast(null)).finally(() => setLoading(false));
-  }, [selected, metric]);
+    api.getForecasts(selectedCompany.id, metric).then(setForecast).catch(() => setForecast(null)).finally(() => setLoading(false));
+  }, [selectedCompany?.id, metric]);
 
   const generate = async () => {
-    if (!selected) return;
+    if (!selectedCompany?.id) return;
     setGenerating(true);
     try {
-      const res = await api.generateForecast(selected, { metric_name: metric, forecast_horizon_years: 3 });
+      const res = await api.generateForecast(selectedCompany.id, { metric_name: metric, forecast_horizon_years: 3 });
       setForecast(res);
     } finally { setGenerating(false); }
   };
@@ -50,8 +52,6 @@ export const ForecastsPage: React.FC = () => {
       period: f.period, actual: null, base: f.base, bullish: f.bullish, bearish: f.bearish,
     })),
   ];
-
-  const selectedCompany = companies.find((c) => c.id === selected);
 
   return (
     <div className="page-container py-8 space-y-7">
@@ -77,9 +77,7 @@ export const ForecastsPage: React.FC = () => {
 
       {/* Controls */}
       <div className="flex flex-wrap gap-3 items-center">
-        <select value={selected} onChange={(e) => setSelected(e.target.value)} className="input px-3 py-2 text-sm">
-          {companies.map((c) => <option key={c.id} value={c.id}>{c.symbol} — {c.name}</option>)}
-        </select>
+        <UniversalCompanySelector className="w-80" />
         <div className="flex gap-1.5">
           {METRICS.map((m) => (
             <button

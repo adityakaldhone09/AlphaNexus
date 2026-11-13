@@ -261,6 +261,14 @@ class QueryRouter:
         for alias, ticker in _COMPANY_ALIASES.items():
             if alias in text:
                 return ticker
+        from app.services.company_discovery import MASTER_EQUITIES_UNIVERSE
+        upper_text = text.upper()
+        for item in MASTER_EQUITIES_UNIVERSE:
+            if re.search(rf"\b{re.escape(item['symbol'])}\b", upper_text) or item["name"].lower() in text:
+                return item["symbol"]
+            for alias in item.get("aliases", []):
+                if len(alias) > 2 and re.search(rf"\b{re.escape(alias)}\b", text, re.IGNORECASE):
+                    return item["symbol"]
         return None
 
     def _extract_metrics(self, text: str) -> List[str]:

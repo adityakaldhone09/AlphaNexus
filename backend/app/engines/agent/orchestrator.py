@@ -186,16 +186,21 @@ def node_plan_research(state: ResearchState) -> ResearchState:
     mode = state.get("research_mode", "quick")
     symbol = state.get("company_symbol")
 
-    # Quick entity extraction — look for known ticker patterns
+    # Dynamic company entity extraction
     if not symbol:
         import re
-        tickers = re.findall(r'\b([A-Z]{3,10})\b', query.upper())
-        known_tickers = ["RELIANCE", "TCS", "HDFCBANK", "INFY", "LT", "ICICIBANK",
-                         "WIPRO", "BAJFINANCE", "MARUTI", "KOTAKBANK", "SBIN", "AXISBANK",
-                         "HINDUNILVR", "NESTLEIND", "TATAMOTORS", "POWERGRID", "NTPC"]
-        for t in tickers:
-            if t in known_tickers:
-                symbol = t
+        from app.services.company_discovery import MASTER_EQUITIES_UNIVERSE
+        q_lower = query.lower()
+        q_upper = query.upper()
+        for item in MASTER_EQUITIES_UNIVERSE:
+            if re.search(rf"\b{re.escape(item['symbol'])}\b", q_upper) or item["name"].lower() in q_lower:
+                symbol = item["symbol"]
+                break
+            for alias in item.get("aliases", []):
+                if len(alias) > 2 and re.search(rf"\b{re.escape(alias)}\b", q_lower, re.IGNORECASE):
+                    symbol = item["symbol"]
+                    break
+            if symbol:
                 break
 
     plan = _build_tool_plan(mode, symbol, query)

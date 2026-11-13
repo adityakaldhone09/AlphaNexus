@@ -139,10 +139,33 @@ export const api = {
   getCompany: async (idOrSymbol: string): Promise<Company> => {
     return cachedGet(`/companies/${idOrSymbol}`);
   },
+  discoverCompany: async (identifier: string): Promise<Company> => {
+    const res = await apiClient.post('/companies/discover', { identifier });
+    return res.data;
+  },
+  syncCompanies: async (): Promise<any> => {
+    const res = await apiClient.post('/companies/sync');
+    return res.data;
+  },
+  getCompanyProfile: async (idOrSymbol: string): Promise<any> => {
+    return cachedGet(`/companies/${idOrSymbol}/profile`);
+  },
 
   // Documents
-  getDocuments: async (params?: { company_id?: string; document_type?: string; status?: string }): Promise<DocumentItem[]> => {
+  getDocuments: async (params?: { company_id?: string; document_type?: string; status?: string; search?: string }): Promise<DocumentItem[]> => {
     return cachedGet('/documents', params);
+  },
+  analyzeDocument: async (file: File): Promise<any> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await apiClient.post('/documents/analyze', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return res.data;
+  },
+  confirmDocument: async (payload: any): Promise<any> => {
+    const res = await apiClient.post('/documents/confirm', payload);
+    return res.data;
   },
   uploadDocument: async (formData: FormData): Promise<any> => {
     const res = await apiClient.post('/documents/upload', formData, {
@@ -152,6 +175,10 @@ export const api = {
   },
   processDocument: async (documentId: string): Promise<any> => {
     const res = await apiClient.post(`/documents/${documentId}/process`);
+    return res.data;
+  },
+  reprocessDocument: async (documentId: string): Promise<any> => {
+    const res = await apiClient.post(`/documents/${documentId}/reprocess`);
     return res.data;
   },
   deleteDocument: async (documentId: string): Promise<any> => {

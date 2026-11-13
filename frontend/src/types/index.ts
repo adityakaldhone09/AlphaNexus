@@ -21,8 +21,10 @@ export interface Company {
   description?: string;
   website?: string;
   is_active: boolean;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string;
+  status?: string;
+  is_registered?: boolean;
 }
 
 export interface FinancialMetric {
@@ -45,6 +47,8 @@ export interface FinancialMetric {
 export interface DocumentItem {
   id: string;
   company_id: string;
+  company_name?: string;
+  company_symbol?: string;
   title: string;
   filename: string;
   file_size_bytes: number;
@@ -56,6 +60,66 @@ export interface DocumentItem {
   total_pages: number;
   total_chunks: number;
   created_at: string;
+}
+
+export interface DocumentCandidate {
+  id?: string;
+  name: string;
+  symbol: string;
+  exchange: string;
+  isin?: string;
+}
+
+export interface DocumentAnalysisResult {
+  filename: string;
+  file_size_bytes: number;
+  file_hash: string;
+  mime_type: string;
+  total_pages: number;
+  extracted_text_preview: string;
+
+  is_relevant: boolean;
+  relevance_category: string;
+  relevance_confidence: number;
+  relevance_reasons: string[];
+  rejection_message?: string;
+
+  company_id?: string;
+  company_name?: string;
+  company_symbol?: string;
+  exchange: string;
+  isin?: string;
+  company_confidence: number;
+  company_identification_status: string;
+  candidate_matches: DocumentCandidate[];
+  company_evidence: string[];
+
+  detected_title: string;
+  document_type: string;
+  document_type_confidence: number;
+  financial_year?: string;
+  quarter?: string;
+  reporting_basis: string;
+  currency: string;
+  unit: string;
+
+  is_duplicate: boolean;
+  existing_document_id?: string;
+  existing_document_title?: string;
+
+  temp_file_token: string;
+  can_proceed: boolean;
+}
+
+export interface DocumentConfirmPayload {
+  temp_file_token: string;
+  company_id?: string;
+  company_symbol?: string;
+  title?: string;
+  financial_year?: string;
+  document_type?: string;
+  quarter?: string;
+  auto_process?: boolean;
 }
 
 export interface CitationItem {

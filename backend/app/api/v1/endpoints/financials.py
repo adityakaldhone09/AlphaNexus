@@ -80,7 +80,8 @@ def get_company_ratios(company_id: str, db: Session = Depends(get_db)):
 
     metrics_map = {m.metric_name: float(m.value) for m in metrics}
 
-    # Add company current quote stats
+    # Add company current quote stats & sector context
+    metrics_map["sector"] = company.sector
     metrics_map["current_price"] = float(company.current_price) if company.current_price else None
     metrics_map["pe_ratio"] = float(company.pe_ratio) if company.pe_ratio else None
     metrics_map["pb_ratio"] = float(company.pb_ratio) if company.pb_ratio else None
